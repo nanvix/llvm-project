@@ -718,6 +718,23 @@ public:
   }
 };
 
+// x86-32 Nanvix target
+class LLVM_LIBRARY_VISIBILITY NanvixX86_32TargetInfo : public X86_32TargetInfo {
+public:
+  NanvixX86_32TargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
+      : X86_32TargetInfo(Triple, Opts) {
+    SizeType = UnsignedLong;
+    IntPtrType = SignedLong;
+    PtrDiffType = SignedLong;
+  }
+
+  void getTargetDefines(const LangOptions &Opts,
+                        MacroBuilder &Builder) const override {
+    X86_32TargetInfo::getTargetDefines(Opts, Builder);
+    Builder.defineMacro("__nanvix__");
+  }
+};
+
 // x86-64 generic target
 class LLVM_LIBRARY_VISIBILITY X86_64TargetInfo : public X86TargetInfo {
 public:

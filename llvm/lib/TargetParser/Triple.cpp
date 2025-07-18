@@ -309,6 +309,7 @@ StringRef Triple::getOSTypeName(OSType Kind) {
   case PS4: return "ps4";
   case PS5: return "ps5";
   case RTEMS: return "rtems";
+  case Nanvix: return "nanvix";
   case Solaris: return "solaris";
   case Serenity: return "serenity";
   case TvOS: return "tvos";
@@ -692,6 +693,7 @@ static Triple::OSType parseOS(StringRef OSName) {
     .StartsWith("zos", Triple::ZOS)
     .StartsWith("haiku", Triple::Haiku)
     .StartsWith("rtems", Triple::RTEMS)
+    .StartsWith("nanvix", Triple::Nanvix)
     .StartsWith("nacl", Triple::NaCl)
     .StartsWith("aix", Triple::AIX)
     .StartsWith("cuda", Triple::CUDA)

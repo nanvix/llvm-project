@@ -209,6 +209,7 @@ public:
     Lv2, // PS3
     MacOSX,
     Managarm,
+    Nanvix,
     NetBSD,
     OpenBSD,
     Solaris,

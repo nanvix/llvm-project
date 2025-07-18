@@ -47,6 +47,7 @@
 #include "ToolChains/SPIRVOpenMP.h"
 #include "ToolChains/SYCL.h"
 #include "ToolChains/Solaris.h"
+#include "ToolChains/Nanvix.h"
 #include "ToolChains/TCE.h"
 #include "ToolChains/UEFI.h"
 #include "ToolChains/VEToolchain.h"
@@ -6830,6 +6831,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       break;
     case llvm::Triple::Solaris:
       TC = std::make_unique<toolchains::Solaris>(*this, Target, Args);
+      break;
+    case llvm::Triple::Nanvix:
+      TC = std::make_unique<toolchains::Nanvix>(*this, Target, Args);
       break;
     case llvm::Triple::CUDA:
       TC = std::make_unique<toolchains::NVPTXToolChain>(*this, Target, Args);
