@@ -1,0 +1,68 @@
+#!/bin/bash
+
+# Copyright(c) The Maintainers of Nanvix.
+# Licensed under the MIT License.
+
+#==================================================================================================
+
+# Mandatory arguments:
+export RULE=$1
+
+# Optional arguments:
+export INSTALL_PREFIX=$2
+
+#==================================================================================================
+# Functions
+#==================================================================================================
+
+configure() {
+    cmake -S llvm -B build -G Ninja \
+        -DLLVM_PARALLEL_LINK_JOBS=1 \
+        -DLLVM_ENABLE_PROJECTS=clang \
+        -DLLVM_TARGETS_TO_BUILD=X86 \
+        -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
+        -DCMAKE_BUILD_TYPE=Release
+}
+
+build() {
+    cmake --build build -j$(nproc)
+}
+
+install() {
+    # Check if installation prefix is missing.
+    if [ -z "$INSTALL_PREFIX" ]; then
+        echo "Error: INSTALL_PREFIX is not set."
+        exit 1
+    fi
+
+    cmake -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} -P build/cmake_install.cmake
+}
+
+help() {
+    echo "Usage: $0 <rule> [install_prefix]"
+    echo "Rules:"
+    echo "  build       - Build the project."
+    echo "  configure   - Configure a build."
+    echo "  install     - Install the project."
+}
+
+#==================================================================================================
+# Main Script
+#==================================================================================================
+
+case $RULE in
+    build)
+        build
+        ;;
+    configure)
+        configure
+        ;;
+    install)
+        install
+        ;;
+    *)
+        echo "Unsupported rule: $RULE"
+        help
+        exit 1
+        ;;
+esac
