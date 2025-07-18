@@ -580,6 +580,8 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
       return std::make_unique<HaikuX86_32TargetInfo>(Triple, Opts);
     case llvm::Triple::RTEMS:
       return std::make_unique<RTEMSX86_32TargetInfo>(Triple, Opts);
+    case llvm::Triple::Nanvix:
+      return std::make_unique<NanvixX86_32TargetInfo>(Triple, Opts);
     case llvm::Triple::NaCl:
       return std::make_unique<NaClTargetInfo<X86_32TargetInfo>>(Triple, Opts);
     case llvm::Triple::ELFIAMCU:

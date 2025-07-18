@@ -1371,6 +1371,7 @@ void tools::linkSanitizerRuntimeDeps(const ToolChain &TC,
   addAsNeededOption(TC, Args, CmdArgs, false);
   // There's no libpthread or librt on RTEMS & Android.
   if (TC.getTriple().getOS() != llvm::Triple::RTEMS &&
+      TC.getTriple().getOS() != llvm::Triple::Nanvix &&
       !TC.getTriple().isAndroid() && !TC.getTriple().isOHOSFamily()) {
     CmdArgs.push_back("-lpthread");
     if (!TC.getTriple().isOSOpenBSD())
@@ -1380,7 +1381,8 @@ void tools::linkSanitizerRuntimeDeps(const ToolChain &TC,
   // There's no libdl on all OSes.
   if (!TC.getTriple().isOSFreeBSD() && !TC.getTriple().isOSNetBSD() &&
       !TC.getTriple().isOSOpenBSD() &&
-      TC.getTriple().getOS() != llvm::Triple::RTEMS)
+      TC.getTriple().getOS() != llvm::Triple::RTEMS &&
+      TC.getTriple().getOS() != llvm::Triple::Nanvix)
     CmdArgs.push_back("-ldl");
   // Required for backtrace on some OSes
   if (TC.getTriple().isOSFreeBSD() ||

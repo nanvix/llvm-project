@@ -196,6 +196,7 @@ public:
     Linux,
     Lv2,        // PS3
     MacOSX,
+	  Nanvix,
     NetBSD,
     OpenBSD,
     Solaris,
