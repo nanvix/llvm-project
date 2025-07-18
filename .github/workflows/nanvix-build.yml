@@ -1,0 +1,23 @@
+name: Build Nanvix
+
+on:
+  push:
+    branches:
+      - 'nanvix/**'
+  pull_request:
+    branches:
+      - 'nanvix/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Configure Build
+      run: ./z configure
+
+    - name: Build
+      run: ./z build
