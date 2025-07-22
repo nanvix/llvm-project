@@ -21,7 +21,11 @@
 
 #if defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)
 
+#if !defined(__nanvix__)
 #include <assert.h>
+#else
+#define static_assert(expr, msg) ((void)sizeof(char[1 - 2*!(expr)]))
+#endif
 
 #ifdef _MSC_VER
 #include <intrin.h>
@@ -936,9 +940,11 @@ int CONSTRUCTOR_ATTRIBUTE __cpu_indicator_init(void) {
   } else
     __cpu_model.__cpu_vendor = VENDOR_OTHER;
 
+#if !defined(__nanvix__)
   assert(__cpu_model.__cpu_vendor < VENDOR_MAX);
   assert(__cpu_model.__cpu_type < CPU_TYPE_MAX);
   assert(__cpu_model.__cpu_subtype < CPU_SUBTYPE_MAX);
+#endif
 
   return 0;
 }
