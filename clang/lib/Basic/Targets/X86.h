@@ -1018,6 +1018,14 @@ public:
     LongDoubleFormat = &llvm::APFloat::IEEEquad();
   }
 };
+
+// x86_64 Nanvix target
+class LLVM_LIBRARY_VISIBILITY NanvixX86_64TargetInfo
+    : public NanvixTargetInfo<X86_64TargetInfo> {
+public:
+  NanvixX86_64TargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
+      : NanvixTargetInfo<X86_64TargetInfo>(Triple, Opts) {}
+};
 } // namespace targets
 } // namespace clang
 #endif // LLVM_CLANG_LIB_BASIC_TARGETS_X86_H
