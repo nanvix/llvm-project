@@ -34,6 +34,12 @@ void Nanvix::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
     return;
   }
 
+  if (!DriverArgs.hasArg(options::OPT_nobuiltininc)) {
+    SmallString<128> P(D.ResourceDir);
+    llvm::sys::path::append(P, "include");
+    addSystemInclude(DriverArgs, CC1Args, P);
+  }
+
   // Check for configure-time C include directories.
   StringRef CIncludeDirs(C_INCLUDE_DIRS);
   if (CIncludeDirs != "") {
