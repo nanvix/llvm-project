@@ -16,12 +16,31 @@ export INSTALL_PREFIX=$2
 #==================================================================================================
 
 configure() {
+    # Config options for compiler-rt.
+    local compiler_rt_options=(
+        -DCOMPILER_RT_BUILD_BUILTINS=ON
+        -DCOMPILER_RT_BUILD_CRT=OFF
+        -DCOMPILER_RT_USE_LIBCXX=OFF
+        -DCOMPILER_RT_CXX_LIBRARY=none
+        -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF
+        -DCOMPILER_RT_BAREMETAL_BUILD=ON
+        -DCOMPILER_RT_BUILD_GWP_ASAN=OFF
+        -DCOMPILER_RT_BUILD_LIBFUZZER=OFF
+        -DCOMPILER_RT_BUILD_MEMPROF=OFF
+        -DCOMPILER_RT_BUILD_PROFILE=OFF
+        -DCOMPILER_RT_BUILD_SANITIZERS=OFF
+        -DCOMPILER_RT_BUILD_XRAY=OFF
+        -DCOMPILER_RT_BUILD_ORC=OFF
+    )
+
     cmake -S llvm -B build -G Ninja \
         -DLLVM_PARALLEL_LINK_JOBS=1 \
         -DLLVM_ENABLE_PROJECTS=clang \
         -DLLVM_TARGETS_TO_BUILD=X86 \
         -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
-        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_BUILD_TYPE=Release \
+        -DLLVM_ENABLE_RUNTIMES=compiler-rt \
+        "${compiler_rt_options[@]}"
 }
 
 build() {
