@@ -650,6 +650,8 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
       return std::make_unique<HaikuTargetInfo<X86_64TargetInfo>>(Triple, Opts);
     case llvm::Triple::NaCl:
       return std::make_unique<NaClTargetInfo<X86_64TargetInfo>>(Triple, Opts);
+    case llvm::Triple::Nanvix:
+      return std::make_unique<NanvixTargetInfo<X86_64TargetInfo>>(Triple, Opts);
     case llvm::Triple::PS4:
       return std::make_unique<PS4OSTargetInfo<X86_64TargetInfo>>(Triple, Opts);
     case llvm::Triple::PS5:
