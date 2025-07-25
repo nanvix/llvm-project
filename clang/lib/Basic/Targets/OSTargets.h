@@ -618,6 +618,7 @@ protected:
 
     DefineStd(Builder, "unix", Opts);
     Builder.defineMacro("__nanvix__");
+    Builder.defineMacro("_GNU_SOURCE");
   }
 
 public:

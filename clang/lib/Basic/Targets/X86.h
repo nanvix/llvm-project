@@ -732,6 +732,7 @@ public:
                         MacroBuilder &Builder) const override {
     X86_32TargetInfo::getTargetDefines(Opts, Builder);
     Builder.defineMacro("__nanvix__");
+    Builder.defineMacro("_GNU_SOURCE");
   }
 };
 
