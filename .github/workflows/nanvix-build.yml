@@ -21,3 +21,6 @@ jobs:
 
     - name: Build
       run: ./z build
+
+    - name: Install
+      run: ./z install /tmp
