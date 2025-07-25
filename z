@@ -75,7 +75,7 @@ configure() {
 }
 
 build() {
-    cmake --build build -j$(nproc)
+    cmake --build build -j$(nproc) -v
 }
 
 install() {
