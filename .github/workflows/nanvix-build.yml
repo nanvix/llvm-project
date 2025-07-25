@@ -17,7 +17,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Configure Build
-      run: ./z configure
+      run: ./z configure /tmp
 
     - name: Build
       run: ./z build
