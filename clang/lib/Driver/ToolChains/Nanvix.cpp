@@ -11,6 +11,7 @@
 #include "Gnu.h"
 #include "clang/Config/config.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/VirtualFileSystem.h"
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
@@ -57,7 +58,23 @@ void Nanvix::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
   }
 }
 
-void Nanvix::addLibStdCxxIncludePaths(const llvm::opt::ArgList &DriverArgs,
-                                      llvm::opt::ArgStringList &CC1Args) const {
-  // TODO: add system includes for libstdc++.
+void Nanvix::AddClangCXXStdlibIncludeArgs(
+    const llvm::opt::ArgList &DriverArgs,
+    llvm::opt::ArgStringList &CC1Args) const {
+  // Check for (1)
+  // Get from '<install>/bin' to '<install>/include/c++/v1'.
+  // Note that ToolchainDir can be relative, so we use '..' instead of
+  // parent_path.
+  llvm::SmallString<128> ToolchainDir(getDriver().Dir); // <install>/bin
+  llvm::sys::path::append(ToolchainDir, "..");
+  if (getVFS().exists(ToolchainDir)) {
+    addSystemInclude(DriverArgs, CC1Args, ToolchainDir + "/include/c++/v1");
+    // TODO: use triple to determine the correct path.
+    addSystemInclude(DriverArgs, CC1Args,
+                     ToolchainDir + "/include/i686-unknown-nanvix/c++/v1/");
+    return;
+  } else if (DriverArgs.hasArg(options::OPT_v)) {
+    llvm::errs() << "ignoring nonexistent directory \"" << ToolchainDir
+                 << "\"\n";
+  }
 }
