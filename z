@@ -34,14 +34,44 @@ configure() {
         -DCOMPILER_RT_BUILD_ORC=OFF
     )
 
+    # Config options for libc++.
+    local libcxx_options=(
+        -DLIBCXX_ENABLE_SHARED=OFF
+        -DLIBCXX_ENABLE_STATIC=ON
+        -DLIBCXX_INCLUDE_TESTS=OFF
+        -DLIBCXX_INCLUDE_BENCHMARKS=OFF
+        -DLIBCXX_ENABLE_TIME_ZONE_DATABASE=OFF
+        -DLIBCXX_HAS_MUSL_LIBC=OFF
+    )
+
+    # Config options for libunwind.
+    local libunwind_options=(
+        -DLIBUNWIND_ENABLE_STATIC=ON
+        -DLIBUNWIND_ENABLE_SHARED=OFF
+        -DLIBUNWIND_USE_COMPILER_RT=ON
+        -DLIBUNWIND_IS_BAREMETAL=ON
+    )
+
+    # Compig options for libcxxabi.
+    local libcxxabi_options=(
+        -DLIBCXXABI_USE_COMPILER_RT=ON
+        -DLIBCXXABI_ENABLE_STATIC_UNWINDER=ON
+        -DLIBCXXABI_ENABLE_STATIC=ON
+        -DLIBCXXABI_ENABLE_SHARED=OFF
+    )
+
     cmake -S llvm -B build -G Ninja \
         -DLLVM_PARALLEL_LINK_JOBS=1 \
         -DLLVM_ENABLE_PROJECTS=clang \
         -DLLVM_TARGETS_TO_BUILD=X86 \
         -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
         -DCMAKE_BUILD_TYPE=Release \
-        -DLLVM_ENABLE_RUNTIMES=compiler-rt \
-        "${compiler_rt_options[@]}"
+        -DC_INCLUDE_DIRS=${INSTALL_PREFIX}/usr/include \
+        -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
+        "${compiler_rt_options[@]}" \
+        "${libcxx_options[@]}" \
+        "${libunwind_options[@]}" \
+        "${libcxxabi_options[@]}"
 }
 
 build() {
