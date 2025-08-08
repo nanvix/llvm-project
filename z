@@ -61,6 +61,7 @@ configure() {
     )
 
     cmake -S llvm -B build -G Ninja \
+        -DCMAKE_VERBOSE_MAKEFILE=ON \
         -DLLVM_PARALLEL_LINK_JOBS=1 \
         -DLLVM_ENABLE_PROJECTS=clang \
         -DLLVM_TARGETS_TO_BUILD=X86 \
