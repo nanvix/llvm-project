@@ -52,7 +52,7 @@ configure() {
         -DLIBUNWIND_IS_BAREMETAL=ON
     )
 
-    # Compig options for libcxxabi.
+    # Config options for libcxxabi.
     local libcxxabi_options=(
         -DLIBCXXABI_USE_COMPILER_RT=ON
         -DLIBCXXABI_ENABLE_STATIC_UNWINDER=ON
