@@ -50,6 +50,7 @@ configure() {
         -DLIBUNWIND_ENABLE_SHARED=OFF
         -DLIBUNWIND_USE_COMPILER_RT=ON
         -DLIBUNWIND_IS_BAREMETAL=ON
+        -DLIBUNWIND_ADDITIONAL_COMPILE_FLAGS='-mno-sse;-mno-sse2'
     )
 
     # Config options for libcxxabi.
