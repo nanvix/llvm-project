@@ -66,7 +66,7 @@ configure() {
         -DLLVM_TARGETS_TO_BUILD=X86 \
         -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
         -DCMAKE_BUILD_TYPE=Release \
-        -DC_INCLUDE_DIRS=${INSTALL_PREFIX}/usr/include \
+        -DC_INCLUDE_DIRS="${INSTALL_PREFIX}/usr/include" \
         -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
         "${compiler_rt_options[@]}" \
         "${libcxx_options[@]}" \
@@ -75,7 +75,7 @@ configure() {
 }
 
 build() {
-    cmake --build build -j$(nproc) -v
+    cmake --build build -j "$(nproc)" -v
 }
 
 install() {
@@ -85,7 +85,7 @@ install() {
         exit 1
     fi
 
-    cmake -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} -P build/cmake_install.cmake
+    cmake -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" -P build/cmake_install.cmake
 }
 
 help() {
