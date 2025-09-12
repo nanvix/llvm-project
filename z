@@ -1,21 +1,149 @@
 #!/bin/bash
 
-# Copyright(c) The Maintainers of Nanvix.
-# Licensed under the MIT License.
+#
+# Utility for building development tools for Nanvix.
+#
+# Run './z help' for more information on how to use this utility.
+#
+# Relevant Environment Variables
+#
+#   - Z_TARGET: Target architecture.
+#   - Z_STAGE: Build stage.
+#   - Z_Z_INSTALL_LOCATION: Installation directory.
+#   - Z_Z_SYSROOT_LOCATION: Sysroot directory.
+#   - Z_RELEASE_NAME: Release name.
+#
+# shellcheck disable=SC2329
+# shellcheck disable=SC2317
+# shellcheck disable=SC2034
 
 #==================================================================================================
 
-# Mandatory arguments:
-export RULE=$1
-
-# Optional arguments:
-export INSTALL_PREFIX=$2
+# Fast fail on errors, unset variables, and pipe failures.
+set -euo pipefail
 
 #==================================================================================================
-# Functions
+# Import Utils Script
 #==================================================================================================
 
-configure() {
+UTILS_SCRIPT_VERSION="f8b25adabc6a88cc7c76a4439f5a3e857ba386a1"
+UTILS_SCRIPT_URL="https://raw.githubusercontent.com/nanvix/scripts/${UTILS_SCRIPT_VERSION}/utils.sh"
+
+utils_script="/tmp/utils-${UTILS_SCRIPT_VERSION}.sh"
+
+# Download only if the file doesn't exist or is empty
+if [[ ! -s "$utils_script" ]]; then
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$UTILS_SCRIPT_URL" -o "$utils_script" || {
+            echo "Failed to download utils.sh"
+            rm -f "$utils_script"
+            exit 1
+        }
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "$utils_script" "$UTILS_SCRIPT_URL" || {
+            echo "Failed to download utils.sh"
+            rm -f "$utils_script"
+            exit 1
+        }
+    else
+        echo "curl or wget required"
+        exit 1
+    fi
+fi
+
+# Source the downloaded script
+# shellcheck disable=SC1090
+source "${utils_script}"
+
+#==================================================================================================
+# Z Constants
+#==================================================================================================
+
+# Project Name
+readonly Z_PROJECT_NAME="LLVM"
+# Directory used when building, empty if not required.
+readonly Z_PROJECT_BUILD_DIR=""
+
+# Required Build Tools (tool_name => minimum_version)
+readonly -A Z_PROJECT_REQUIRED_TOOLS=(
+    ["gcc"]="13.3.0"
+    ["make"]="4.3.0"
+    ["wget"]="1.21.4"
+    ["bzip2"]="1.0.8"
+    ["tar"]="1.34.0"
+    ["cmake"]="3.28.3"
+)
+
+# Required System Packages for Setup
+readonly Z_PROJECT_REQUIRED_PACKAGES=("build-essential" "wget" "bzip2" "tar" "cmake")
+
+#==================================================================================================
+# Project-Specific Constants
+#==================================================================================================
+
+# Build Targets
+BUILD_TARGETS=("all")
+
+# Install Targets
+INSTALL_TARGETS=("install")
+
+# NewLib
+readonly NEWLIB_VERSION="4.4.0"
+readonly NEWLIB_SHORT_COMMIT_HASH="d1147f7ad"
+readonly NEWLIB_URL="https://github.com/nanvix/newlib/releases/download/nanvix-v${NEWLIB_VERSION}-${NEWLIB_SHORT_COMMIT_HASH}/nanvix-newlib-${NEWLIB_VERSION}-${NEWLIB_SHORT_COMMIT_HASH}.tar.bz2"
+readonly NEWLIB_SHA256_CHECKSUM="sha256:7d993383b20b7e095d4f60d64dc9bb8748e49488152232ced61906ae6620e1fe"
+
+#==================================================================================================
+# Project-Specific Functions
+#==================================================================================================
+
+#
+# Description
+#
+#   Executes project-specific steps for downloading dependencies.
+#
+# Return Value
+#
+#   - On success, this function returns zero.
+#   - On failure, this function returns non-zero.
+#
+download_steps() {
+    # Download and extract NewLib if sysroot location is not set.
+    if [[ -z "${Z_SYSROOT_LOCATION}" ]]; then
+        local sysroot_location="${Z_INSTALL_LOCATION}"
+
+        local newlib_tar_bz2_file
+        newlib_tar_bz2_file=$(download "$NEWLIB_URL" "$NEWLIB_SHA256_CHECKSUM") || {
+            print_error "Failed to download NewLib."
+            return 1
+        }
+        extract_tar_bz2 "$newlib_tar_bz2_file" "${sysroot_location}" || {
+            print_error "Failed to extract NewLib."
+            return 1
+        }
+    fi
+
+    return 0
+}
+
+#
+# Description
+#
+#   Executes project-specific steps for configuring a build.
+#
+# Return Value
+#
+#   - On success, this function returns zero.
+#   - On failure, this function returns non-zero.
+#
+# Usage Example
+#
+#   configure_steps "i686-nanvix" "/usr/local"
+#
+configure_steps() {
+    local sysroot_location="${Z_INSTALL_LOCATION}"
+
     # Config options for compiler-rt.
     local compiler_rt_options=(
         -DCOMPILER_RT_BUILD_BUILTINS=ON
@@ -68,53 +196,73 @@ configure() {
         -DLLVM_TARGETS_TO_BUILD=X86 \
         -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
         -DCMAKE_BUILD_TYPE=Release \
-        -DC_INCLUDE_DIRS="${INSTALL_PREFIX}/usr/include" \
+        -DC_INCLUDE_DIRS="${sysroot_location}/usr/include" \
         -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
         "${compiler_rt_options[@]}" \
         "${libcxx_options[@]}" \
         "${libunwind_options[@]}" \
-        "${libcxxabi_options[@]}"
+        "${libcxxabi_options[@]}" || {
+        print_error "Configuration failed."
+        return 1
+    }
+
+    return 0
 }
 
-build() {
-    cmake --build build -j "$(nproc)" -v
+#
+# Description
+#
+#   Project-specific steps for building the project.
+#
+# Parameters
+#
+#   - $1: Number of parallel build jobs.
+#
+# Usage Example
+#
+#   build_steps 4 "all" "check"
+#
+build_steps() {
+    local parallel_build_option=$1
+
+    cmake --build build  -j "${parallel_build_option}" -v || {
+        print_error "Build failed for targets: '${BUILD_TARGETS[*]}'."
+        return 1
+    }
+
+    return 0
 }
 
-install() {
-    # Check if installation prefix is missing.
-    if [ -z "$INSTALL_PREFIX" ]; then
-        echo "Error: INSTALL_PREFIX is not set."
-        exit 1
-    fi
+#
+# Description
+#
+#   Project-specific steps for installing the project.
+#
+# Return Value
+#
+#   - On success, this function returns zero.
+#   - On failure, this function returns non-zero.
+#
+# Usage Example
+#
+#   install_steps "install" "/usr/local"
+#
+install_steps() {
+    cmake -DCMAKE_INSTALL_PREFIX="${Z_INSTALL_LOCATION}" -P build/cmake_install.cmake || {
+        print_error "Installation failed."
+        return 1
+    }
 
-    cmake -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" -P build/cmake_install.cmake
-}
-
-help() {
-    echo "Usage: $0 <rule> [install_prefix]"
-    echo "Rules:"
-    echo "  build       - Build the project."
-    echo "  configure   - Configure a build."
-    echo "  install     - Install the project."
+    return 0
 }
 
 #==================================================================================================
 # Main Script
 #==================================================================================================
 
-case $RULE in
-    build)
-        build
-        ;;
-    configure)
-        configure
-        ;;
-    install)
-        install
-        ;;
-    *)
-        echo "Unsupported rule: $RULE"
-        help
-        exit 1
-        ;;
-esac
+# Run main function with all arguments
+zmain "$@" || {
+    exit 1
+}
+
+exit 0
