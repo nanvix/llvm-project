@@ -50,6 +50,17 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
+    - name: Restore sccache cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/sccache
+        key: ${{ runner.os }}-sccache
+        restore-keys: |
+          ${{ runner.os }}-sccache
+
+    - name: Enable Compiler Caching
+      uses: mozilla-actions/sccache-action@v0.0.9
+
     - name: Install dependencies
       run: sudo ./z setup
 
@@ -70,7 +81,6 @@ jobs:
         git fetch origin
         git checkout -B ${{ steps.commit_info.outputs.llvm_branch }} origin/dev
         git push origin ${{ steps.commit_info.outputs.llvm_branch }}
-
 
     - name: Configure build
       run: ./z configure --install-location=${{ env.RELEASE_INSTALL_LOCATION }} --release-name=${{ steps.commit_info.outputs.release_name }}
