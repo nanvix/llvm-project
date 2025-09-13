@@ -189,6 +189,15 @@ configure_steps() {
         -DLIBCXXABI_ENABLE_SHARED=OFF
     )
 
+    # Use sccache as compiler launcher if available.
+    local cmake_launcher_options=()
+    if command -v sccache >/dev/null 2>&1; then
+        cmake_launcher_options+=(
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+        )
+    fi
+
     cmake -S llvm -B build -G Ninja \
         -DCMAKE_VERBOSE_MAKEFILE=ON \
         -DLLVM_PARALLEL_LINK_JOBS=1 \
@@ -198,6 +207,7 @@ configure_steps() {
         -DCMAKE_BUILD_TYPE=Release \
         -DC_INCLUDE_DIRS="${sysroot_location}/${Z_TARGET}/include" \
         -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
+        "${cmake_launcher_options[@]}" \
         "${compiler_rt_options[@]}" \
         "${libcxx_options[@]}" \
         "${libunwind_options[@]}" \
