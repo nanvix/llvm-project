@@ -26,7 +26,7 @@ set -euo pipefail
 # Import Utils Script
 #==================================================================================================
 
-UTILS_SCRIPT_VERSION="f8b25adabc6a88cc7c76a4439f5a3e857ba386a1"
+UTILS_SCRIPT_VERSION="a9291960bef131ac85fe66bfdc0fdfd2ddc278c4"
 UTILS_SCRIPT_URL="https://raw.githubusercontent.com/nanvix/scripts/${UTILS_SCRIPT_VERSION}/utils.sh"
 
 utils_script="/tmp/utils-${UTILS_SCRIPT_VERSION}.sh"
@@ -90,9 +90,9 @@ INSTALL_TARGETS=("install")
 
 # NewLib
 readonly NEWLIB_VERSION="4.4.0"
-readonly NEWLIB_SHORT_COMMIT_HASH="d1147f7ad"
+readonly NEWLIB_SHORT_COMMIT_HASH="b758e4555"
 readonly NEWLIB_URL="https://github.com/nanvix/newlib/releases/download/nanvix-v${NEWLIB_VERSION}-${NEWLIB_SHORT_COMMIT_HASH}/nanvix-newlib-${NEWLIB_VERSION}-${NEWLIB_SHORT_COMMIT_HASH}.tar.bz2"
-readonly NEWLIB_SHA256_CHECKSUM="sha256:7d993383b20b7e095d4f60d64dc9bb8748e49488152232ced61906ae6620e1fe"
+readonly NEWLIB_SHA256_CHECKSUM="sha256:f3ceab0a08bacce0f51bde3224854c6cf1bc87dfaae8c3e4f763d6d78d51c6b1"
 
 #==================================================================================================
 # Project-Specific Functions
@@ -196,7 +196,7 @@ configure_steps() {
         -DLLVM_TARGETS_TO_BUILD=X86 \
         -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
         -DCMAKE_BUILD_TYPE=Release \
-        -DC_INCLUDE_DIRS="${sysroot_location}/usr/include" \
+        -DC_INCLUDE_DIRS="${sysroot_location}/${Z_TARGET}/include" \
         -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
         "${compiler_rt_options[@]}" \
         "${libcxx_options[@]}" \
