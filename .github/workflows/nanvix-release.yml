@@ -76,17 +76,17 @@ jobs:
         echo "release_name=${RELEASE_NAME}" >> $GITHUB_OUTPUT
         echo "llvm_branch=${LLVM_BRANCH}" >> $GITHUB_OUTPUT
 
-    - name: Fast-forward ${{ steps.commit_info.outputs.llvm_branch }} branch to dev
-      run: |
-        git fetch origin
-        git checkout -B ${{ steps.commit_info.outputs.llvm_branch }} origin/dev
-        git push origin ${{ steps.commit_info.outputs.llvm_branch }}
-
     - name: Configure build
       run: ./z configure --install-location=${{ env.RELEASE_INSTALL_LOCATION }} --release-name=${{ steps.commit_info.outputs.release_name }}
 
     - name: Create release archive
       run: ./z release
+
+    - name: Fast-forward ${{ steps.commit_info.outputs.llvm_branch }} branch to dev
+      run: |
+        git fetch origin
+        git checkout -B ${{ steps.commit_info.outputs.llvm_branch }} origin/dev
+        git push origin ${{ steps.commit_info.outputs.llvm_branch }}
 
     - name: Create release tag
       run: |
