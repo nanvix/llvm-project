@@ -88,11 +88,11 @@ BUILD_TARGETS=("all")
 # Install Targets
 INSTALL_TARGETS=("install")
 
-# NewLib
-readonly NEWLIB_VERSION="4.4.0"
-readonly NEWLIB_SHORT_COMMIT_HASH="b758e4555"
-readonly NEWLIB_URL="https://github.com/nanvix/newlib/releases/download/nanvix-v${NEWLIB_VERSION}-${NEWLIB_SHORT_COMMIT_HASH}/nanvix-newlib-${NEWLIB_VERSION}-${NEWLIB_SHORT_COMMIT_HASH}.tar.bz2"
-readonly NEWLIB_SHA256_CHECKSUM="sha256:f3ceab0a08bacce0f51bde3224854c6cf1bc87dfaae8c3e4f763d6d78d51c6b1"
+# GCC
+readonly GCC_VERSION="12.4.0"
+readonly GCC_SHORT_COMMIT_HASH="cd2f75b2e55"
+readonly GCC_URL="https://github.com/nanvix/gcc/releases/download/nanvix-v${GCC_VERSION}-${GCC_SHORT_COMMIT_HASH}/nanvix-gcc-${GCC_VERSION}-${GCC_SHORT_COMMIT_HASH}-stage1.tar.bz2"
+readonly GCC_SHA256_CHECKSUM="sha256:f4270b07e81497f0dd8851d83248d5958a87d2f4af8537f2bb5f0a1be7b25a64"
 
 #==================================================================================================
 # Project-Specific Functions
@@ -109,17 +109,17 @@ readonly NEWLIB_SHA256_CHECKSUM="sha256:f3ceab0a08bacce0f51bde3224854c6cf1bc87df
 #   - On failure, this function returns non-zero.
 #
 download_steps() {
-    # Download and extract NewLib if sysroot location is not set.
+    # Download and extract GCC if sysroot location is not set.
     if [[ -z "${Z_SYSROOT_LOCATION}" ]]; then
         local sysroot_location="${Z_INSTALL_LOCATION}"
 
-        local newlib_tar_bz2_file
-        newlib_tar_bz2_file=$(download "$NEWLIB_URL" "$NEWLIB_SHA256_CHECKSUM") || {
-            print_error "Failed to download NewLib."
+        local gcc_tar_bz2_file
+        gcc_tar_bz2_file=$(download "$GCC_URL" "$GCC_SHA256_CHECKSUM") || {
+            print_error "Failed to download GCC."
             return 1
         }
-        extract_tar_bz2 "$newlib_tar_bz2_file" "${sysroot_location}" || {
-            print_error "Failed to extract NewLib."
+        extract_tar_bz2 "$gcc_tar_bz2_file" "${sysroot_location}" || {
+            print_error "Failed to extract GCC."
             return 1
         }
     fi
