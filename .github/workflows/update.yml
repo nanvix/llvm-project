@@ -57,7 +57,7 @@ jobs:
       - name: No update needed
         if: steps.find.outputs.found == 'true' && steps.find.outputs.new_short == steps.current.outputs.current_short
         run: |
-          echo "No new release found for gcc ${ { steps.current.outputs.gcc_version } }, or short commit already up-to-date ("${{ steps.current.outputs.current_short }}")."
+          echo "No new release found for gcc ${{ steps.current.outputs.gcc_version }}, or short commit already up-to-date (${{ steps.current.outputs.current_short }})."
 
       - name: Download asset and compute checksum
         if: steps.find.outputs.found == 'true' && steps.find.outputs.new_short != steps.current.outputs.current_short
