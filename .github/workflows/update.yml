@@ -6,6 +6,11 @@ on:
     - cron: '0 8 * * *'
   workflow_dispatch:
 
+# Global environment variables for this workflow
+env:
+  # GitHub usernames (comma-separated for multiple) that should be requested as PR reviewers.
+  PR_REVIEWERS: ppenna
+
 jobs:
   update-z:
     name: Check and update z utility
@@ -18,8 +23,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Shallow clone for speed; depth 1 is enough for making a new commit/PR
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Install tools
         run: |
@@ -64,3 +68,4 @@ jobs:
             Generated automatically by the update workflow.
           base: dev
           labels: automated,update
+          reviewers: ${{ env.PR_REVIEWERS }}
