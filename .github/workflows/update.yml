@@ -18,119 +18,48 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # Shallow clone for speed; depth 1 is enough for making a new commit/PR
+          fetch-depth: 1
 
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq curl ca-certificates bzip2
+          sudo apt-get install -y jq curl
+          # Ensure unified helper script is executable
+          chmod +x .z/update.sh
 
-      - name: Get latest GCC release info
-        id: release
+      - name: Run unified update script
+        id: update
         run: |
           set -euo pipefail
-          api="https://api.github.com/repos/nanvix/gcc/releases/latest"
-          echo "Fetching $api"
-          resp=$(curl -sL "$api")
-
-          # Find the first asset that matches our stage1 tarball naming convention.
-          asset=$(echo "$resp" | jq -r '.assets[] | select(.name | test("nanvix-gcc-.*-stage1\\.tar\\.bz2$"))' || true)
-          if [ -z "$asset" ]; then
-            echo "no_asset=true" >> "$GITHUB_OUTPUT"
-            echo "::warning ::No matching nanvix-gcc stage1 asset found in latest release"
-            exit 0
+          .z/update.sh \
+            https://api.github.com/repos/nanvix/gcc/releases/latest \
+            'nanvix-gcc-.*-stage1\.tar\.bz2$' \
+            'nanvix-gcc-([0-9]+\.[0-9]+\.[0-9]+)-([0-9a-fA-F]+)-stage1\.tar\.bz2' \
+            GCC
+          echo "Outputs:"
+          echo "  changed=${{ steps.update.outputs.changed }}"
+          echo "  version=${{ steps.update.outputs.version }}"
+          echo "  short_hash=${{ steps.update.outputs.short_hash }}"
+          echo "  asset_digest=${{ steps.update.outputs.asset_digest }}"
+          echo "  updated_vars=${{ steps.update.outputs.updated_vars }}"
+          if [ "${{ steps.update.outputs.changed }}" = "true" ]; then
+            echo "Git diff:"
+            git --no-pager diff --name-only
           fi
-
-          tag_name=$(echo "$resp" | jq -r '.tag_name')
-          asset_name=$(echo "$asset" | jq -r '.name')
-          asset_digest=$(echo "$asset" | jq -r '.digest // empty')
-
-          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
-          echo "asset_digest=$asset_digest" >> "$GITHUB_OUTPUT"
-          echo "no_asset=false" >> "$GITHUB_OUTPUT"
-
-          # Parse version and short hash from asset name: nanvix-gcc-12.4.0-cd2f75b2e55-stage1.tar.bz2
-          if [[ "$asset_name" =~ nanvix-gcc-([0-9]+\.[0-9]+\.[0-9]+)-([0-9a-fA-F]+)-stage1\.tar\.bz2 ]]; then
-            echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-            echo "short_hash=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
-          else
-            # Fallback parsing
-            parts=$(echo "$asset_name" | sed -E 's/^nanvix-gcc-//; s/-stage1\\.tar\\.bz2$//')
-            version=$(echo "$parts" | cut -d- -f1)
-            short_hash=$(echo "$parts" | cut -d- -f2)
-            echo "version=$version" >> "$GITHUB_OUTPUT"
-            echo "short_hash=$short_hash" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check if update is needed
-        id: check
-        if: steps.release.outputs.no_asset == 'false'
-        run: |
-          set -euo pipefail
-
-          version="${{ steps.release.outputs.version }}"
-          short_hash="${{ steps.release.outputs.short_hash }}"
-
-          echo "Latest release: $version $short_hash"
-
-          # Read current values from z
-          if [ -f z ]; then
-            # Use sed to extract the assigned values (handles optional quotes)
-            current_version=$(sed -nE 's/^readonly[[:space:]]+GCC_VERSION="?([^" ]+)"?/\1/p' z | head -n1 || true)
-            current_short_hash=$(sed -nE 's/^readonly[[:space:]]+GCC_SHORT_COMMIT_HASH="?([^" ]+)"?/\1/p' z | head -n1 || true)
-            current_sha=$(sed -nE 's/^readonly[[:space:]]+GCC_SHA256_CHECKSUM="?sha256:([^" ]+)"?/\1/p' z | head -n1 || true)
-            : "${current_version:=}"
-            : "${current_short_hash:=}"
-          else
-            current_version=""
-            current_short_hash=""
-            current_sha=""
-          fi
-
-          echo "Current: $current_version $current_short_hash"
-
-          if [ "$version" = "$current_version" ] && [ "$short_hash" = "$current_short_hash" ]; then
-            echo "no_update=true" >> "$GITHUB_OUTPUT"
-            echo "Up to date"
-            exit 0
-          else
-            echo "no_update=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Update z file
-        if: steps.check.outputs.no_update == 'false' && steps.release.outputs.no_asset == 'false'
-        run: |
-          set -euo pipefail
-          version="${{ steps.release.outputs.version }}"
-          short_hash="${{ steps.release.outputs.short_hash }}"
-          sha="${{ steps.release.outputs.asset_digest }}"
-
-          echo "Updating z: version=$version short_hash=$short_hash sha256=$sha"
-
-          # Ensure z exists before attempting modifications
-          if [ ! -f z ]; then
-            echo "::error file=z,line=1::z file not found in repository root"
-            exit 1
-          fi
-
-          sed -E -i "s/^readonly GCC_SHORT_COMMIT_HASH=.*/readonly GCC_SHORT_COMMIT_HASH=\"${short_hash}\"/" z
-          sed -E -i "s#^readonly GCC_SHA256_CHECKSUM=.*#readonly GCC_SHA256_CHECKSUM=\"sha256:${sha}\"#" z
-          sed -E -i "s/^readonly GCC_VERSION=.*/readonly GCC_VERSION=\"${version}\"/" z
-
-          git status --porcelain
 
       - name: Create branch and open Pull Request
-        if: steps.check.outputs.no_update == 'false' && steps.release.outputs.no_asset == 'false'
+        if: steps.update.outputs.changed == 'true' && steps.update.outputs.no_asset == 'false'
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore(z): update GCC to ${{ steps.release.outputs.version }}-${{ steps.release.outputs.short_hash }}"
-          branch: "update/gcc-${{ steps.release.outputs.version }}-${{ steps.release.outputs.short_hash }}"
-          title: "Update GCC to ${{ steps.release.outputs.version }}-${{ steps.release.outputs.short_hash }}"
+          commit-message: "chore(z): update GCC to ${{ steps.update.outputs.version }}-${{ steps.update.outputs.short_hash }}"
+          branch: "update/gcc-${{ steps.update.outputs.version }}-${{ steps.update.outputs.short_hash }}"
+          title: "Update GCC to ${{ steps.update.outputs.version }}-${{ steps.update.outputs.short_hash }}"
           body: |
-            This PR updates the `z` utility to use the latest release of `nanvix/gcc` (${{ steps.release.outputs.version }}-${{ steps.release.outputs.short_hash }}).
+            This PR updates the `z` utility to use the latest release of `nanvix/gcc` (${{ steps.update.outputs.version }}-${{ steps.update.outputs.short_hash }}).
 
-            - Updated: `GCC_SHORT_COMMIT_HASH`, `GCC_SHA256_CHECKSUM`
+            - Updated variables: ${{ steps.update.outputs.updated_vars }}
 
             Generated automatically by the update workflow.
           base: dev
