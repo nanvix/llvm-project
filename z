@@ -90,9 +90,9 @@ INSTALL_TARGETS=("install")
 
 # GCC
 readonly GCC_VERSION="12.4.0"
-readonly GCC_SHORT_COMMIT_HASH="158b47b6e49"
+readonly GCC_SHORT_COMMIT_HASH="9af215ccf6f"
 readonly GCC_URL="https://github.com/nanvix/gcc/releases/download/nanvix-v${GCC_VERSION}-${GCC_SHORT_COMMIT_HASH}/nanvix-gcc-${GCC_VERSION}-${GCC_SHORT_COMMIT_HASH}-stage1.tar.bz2"
-readonly GCC_SHA256_CHECKSUM="sha256:e6233916cd95c84ad3fcd458207c0a5de6e3c68eebd69577970b5f1cd6a41b63"
+readonly GCC_SHA256_CHECKSUM="sha256:5411a62fab815ad0d6a4cad919c49ffe666c63caba4310ed0680ca9c7cd0a36f"
 
 #==================================================================================================
 # Project-Specific Functions
