@@ -11,6 +11,9 @@ export RULE=$1
 # Optional arguments:
 export INSTALL_PREFIX=$2
 
+# Target triple (default: i686-unknown-nanvix).
+export TARGET_TRIPLE="${TARGET_TRIPLE:-i686-unknown-nanvix}"
+
 #==================================================================================================
 # Functions
 #==================================================================================================
@@ -66,7 +69,7 @@ configure() {
         -DLLVM_PARALLEL_LINK_JOBS=1 \
         -DLLVM_ENABLE_PROJECTS=clang \
         -DLLVM_TARGETS_TO_BUILD=X86 \
-        -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
+        -DLLVM_DEFAULT_TARGET_TRIPLE="${TARGET_TRIPLE}" \
         -DCMAKE_BUILD_TYPE=Release \
         -DC_INCLUDE_DIRS="${INSTALL_PREFIX}/usr/include" \
         -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
@@ -96,6 +99,10 @@ help() {
     echo "  build       - Build the project."
     echo "  configure   - Configure a build."
     echo "  install     - Install the project."
+    echo ""
+    echo "Environment Variables:"
+    echo "  TARGET_TRIPLE - Target triple (default: i686-unknown-nanvix)."
+    echo "                  Set to x86_64-unknown-nanvix for 64-bit builds."
 }
 
 #==================================================================================================
