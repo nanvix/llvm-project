@@ -69,9 +69,10 @@ void Nanvix::AddClangCXXStdlibIncludeArgs(
   llvm::sys::path::append(ToolchainDir, "..");
   if (getVFS().exists(ToolchainDir)) {
     addSystemInclude(DriverArgs, CC1Args, ToolchainDir + "/include/c++/v1");
-    // TODO: use triple to determine the correct path.
+    // Use the target triple to determine the arch-specific include path.
     addSystemInclude(DriverArgs, CC1Args,
-                     ToolchainDir + "/include/i686-unknown-nanvix/c++/v1/");
+                     ToolchainDir + "/include/" +
+                         getTriple().str() + "/c++/v1/");
     return;
   } else if (DriverArgs.hasArg(options::OPT_v)) {
     llvm::errs() << "ignoring nonexistent directory \"" << ToolchainDir
