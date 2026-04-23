@@ -88,7 +88,7 @@ BUILD_TARGETS=("all")
 # Install Targets
 INSTALL_TARGETS=("install")
 
-# GCC
+# GCC (used only when building without staged mode and no sysroot provided)
 readonly GCC_VERSION="12.4.0"
 readonly GCC_SHORT_COMMIT_HASH="9af215ccf6f"
 readonly GCC_URL="https://github.com/nanvix/gcc/releases/download/nanvix-v${GCC_VERSION}-${GCC_SHORT_COMMIT_HASH}/nanvix-gcc-${GCC_VERSION}-${GCC_SHORT_COMMIT_HASH}-stage1.tar.bz2"
@@ -109,7 +109,24 @@ readonly GCC_SHA256_CHECKSUM="sha256:5411a62fab815ad0d6a4cad919c49ffe666c63caba4
 #   - On failure, this function returns non-zero.
 #
 download_steps() {
-    # Download and extract GCC if sysroot location is not set.
+    # Stage 0 (compiler only): no sysroot needed.
+    if [[ "${Z_STAGE}" == "0" ]]; then
+        print_info "Stage 0: no dependencies to download."
+        return 0
+    fi
+
+    # Stage 1 (runtimes): sysroot must already exist.
+    if [[ "${Z_STAGE}" == "1" ]]; then
+        local sysroot_location="${Z_SYSROOT_LOCATION:-${Z_INSTALL_LOCATION}}"
+        if [[ ! -d "${sysroot_location}" ]]; then
+            print_error "Stage 1 requires a sysroot at '${sysroot_location}'."
+            return 1
+        fi
+        print_info "Stage 1: using existing sysroot at '${sysroot_location}'."
+        return 0
+    fi
+
+    # Legacy (no stage specified): download GCC if sysroot location is not set.
     if [[ -z "${Z_SYSROOT_LOCATION}" ]]; then
         local sysroot_location="${Z_INSTALL_LOCATION}"
 
@@ -130,18 +147,124 @@ download_steps() {
 #
 # Description
 #
-#   Executes project-specific steps for configuring a build.
+#   Configures an LLVM stage 0 build (Clang + LLD only, no runtimes).
 #
-# Return Value
+configure_stage0() {
+    local sysroot_location="${Z_SYSROOT_LOCATION:-${Z_INSTALL_LOCATION}}"
+
+    # Use sccache as compiler launcher if available.
+    local cmake_launcher_options=()
+    if command -v sccache >/dev/null 2>&1; then
+        cmake_launcher_options+=(
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+        )
+    fi
+
+    cmake -S llvm -B build -G Ninja \
+        -DCMAKE_VERBOSE_MAKEFILE=ON \
+        -DLLVM_PARALLEL_LINK_JOBS=1 \
+        -DLLVM_ENABLE_PROJECTS='clang;lld' \
+        -DLLVM_TARGETS_TO_BUILD=X86 \
+        -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
+        -DDEFAULT_SYSROOT="${sysroot_location}" \
+        -DC_INCLUDE_DIRS="${sysroot_location}/usr/include" \
+        -DCMAKE_BUILD_TYPE=Release \
+        "${cmake_launcher_options[@]}" || {
+        print_error "Stage 0 configuration failed."
+        return 1
+    }
+
+    return 0
+}
+
 #
-#   - On success, this function returns zero.
-#   - On failure, this function returns non-zero.
+# Description
 #
-# Usage Example
+#   Configures an LLVM stage 1 build (runtimes only, using installed Clang).
 #
-#   configure_steps "i686-nanvix" "/usr/local"
+configure_stage1() {
+    local sysroot_location="${Z_SYSROOT_LOCATION:-${Z_INSTALL_LOCATION}}"
+
+    # Config options for compiler-rt.
+    local compiler_rt_options=(
+        -DCOMPILER_RT_BUILD_BUILTINS=ON
+        -DCOMPILER_RT_BUILD_CRT=OFF
+        -DCOMPILER_RT_USE_LIBCXX=OFF
+        -DCOMPILER_RT_CXX_LIBRARY=none
+        -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF
+        -DCOMPILER_RT_BAREMETAL_BUILD=ON
+        -DCOMPILER_RT_BUILD_GWP_ASAN=OFF
+        -DCOMPILER_RT_BUILD_LIBFUZZER=OFF
+        -DCOMPILER_RT_BUILD_MEMPROF=OFF
+        -DCOMPILER_RT_BUILD_PROFILE=OFF
+        -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF
+        -DCOMPILER_RT_BUILD_SANITIZERS=OFF
+        -DCOMPILER_RT_BUILD_XRAY=OFF
+        -DCOMPILER_RT_BUILD_ORC=OFF
+    )
+
+    # Config options for libc++.
+    local libcxx_options=(
+        -DLIBCXX_ENABLE_SHARED=OFF
+        -DLIBCXX_ENABLE_STATIC=ON
+        -DLIBCXX_INCLUDE_TESTS=OFF
+        -DLIBCXX_INCLUDE_BENCHMARKS=OFF
+        -DLIBCXX_ENABLE_TIME_ZONE_DATABASE=OFF
+        -DLIBCXX_HAS_MUSL_LIBC=OFF
+    )
+
+    # Config options for libunwind.
+    local libunwind_options=(
+        -DLIBUNWIND_ENABLE_STATIC=ON
+        -DLIBUNWIND_ENABLE_SHARED=OFF
+        -DLIBUNWIND_USE_COMPILER_RT=ON
+        -DLIBUNWIND_IS_BAREMETAL=ON
+        -DLIBUNWIND_ADDITIONAL_COMPILE_FLAGS='-mno-sse;-mno-sse2'
+    )
+
+    # Config options for libcxxabi.
+    local libcxxabi_options=(
+        -DLIBCXXABI_USE_COMPILER_RT=ON
+        -DLIBCXXABI_ENABLE_STATIC_UNWINDER=ON
+        -DLIBCXXABI_ENABLE_STATIC=ON
+        -DLIBCXXABI_ENABLE_SHARED=OFF
+    )
+
+    # Use sccache as compiler launcher if available.
+    local cmake_launcher_options=()
+    if command -v sccache >/dev/null 2>&1; then
+        cmake_launcher_options+=(
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+        )
+    fi
+
+    cmake -S runtimes -B build-runtimes -G Ninja \
+        -DCMAKE_VERBOSE_MAKEFILE=ON \
+        -DCMAKE_C_COMPILER="${Z_INSTALL_LOCATION}/bin/clang" \
+        -DCMAKE_CXX_COMPILER="${Z_INSTALL_LOCATION}/bin/clang++" \
+        -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DC_INCLUDE_DIRS="${sysroot_location}/usr/include" \
+        "${cmake_launcher_options[@]}" \
+        "${compiler_rt_options[@]}" \
+        "${libcxx_options[@]}" \
+        "${libunwind_options[@]}" \
+        "${libcxxabi_options[@]}" || {
+        print_error "Stage 1 configuration failed."
+        return 1
+    }
+
+    return 0
+}
+
 #
-configure_steps() {
+# Description
+#
+#   Configures a legacy (non-staged) LLVM build with Clang + runtimes.
+#
+configure_legacy() {
     local sysroot_location="${Z_INSTALL_LOCATION}"
 
     # Config options for compiler-rt.
@@ -222,6 +345,30 @@ configure_steps() {
 #
 # Description
 #
+#   Executes project-specific steps for configuring a build.
+#
+# Return Value
+#
+#   - On success, this function returns zero.
+#   - On failure, this function returns non-zero.
+#
+# Usage Example
+#
+#   configure_steps "i686-nanvix" "/usr/local"
+#
+configure_steps() {
+    if [[ "${Z_STAGE}" == "0" ]]; then
+        configure_stage0
+    elif [[ "${Z_STAGE}" == "1" ]]; then
+        configure_stage1
+    else
+        configure_legacy
+    fi
+}
+
+#
+# Description
+#
 #   Project-specific steps for building the project.
 #
 # Parameters
@@ -235,7 +382,12 @@ configure_steps() {
 build_steps() {
     local parallel_build_option=$1
 
-    cmake --build build  -j "${parallel_build_option}" -v || {
+    local build_dir="build"
+    if [[ "${Z_STAGE}" == "1" ]]; then
+        build_dir="build-runtimes"
+    fi
+
+    cmake --build "${build_dir}" -j "${parallel_build_option}" -v || {
         print_error "Build failed for targets: '${BUILD_TARGETS[*]}'."
         return 1
     }
@@ -258,7 +410,12 @@ build_steps() {
 #   install_steps "install" "/usr/local"
 #
 install_steps() {
-    cmake -DCMAKE_INSTALL_PREFIX="${Z_INSTALL_LOCATION}" -P build/cmake_install.cmake || {
+    local build_dir="build"
+    if [[ "${Z_STAGE}" == "1" ]]; then
+        build_dir="build-runtimes"
+    fi
+
+    cmake -DCMAKE_INSTALL_PREFIX="${Z_INSTALL_LOCATION}" -P "${build_dir}/cmake_install.cmake" || {
         print_error "Installation failed."
         return 1
     }
