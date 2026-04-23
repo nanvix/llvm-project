@@ -244,6 +244,15 @@ configure_stage1() {
         -DCMAKE_VERBOSE_MAKEFILE=ON \
         -DCMAKE_C_COMPILER="${Z_INSTALL_LOCATION}/bin/clang" \
         -DCMAKE_CXX_COMPILER="${Z_INSTALL_LOCATION}/bin/clang++" \
+        -DCMAKE_ASM_COMPILER="${Z_INSTALL_LOCATION}/bin/clang" \
+        -DCMAKE_C_COMPILER_TARGET=i686-unknown-nanvix \
+        -DCMAKE_CXX_COMPILER_TARGET=i686-unknown-nanvix \
+        -DCMAKE_ASM_COMPILER_TARGET=i686-unknown-nanvix \
+        -DCMAKE_SYSTEM_NAME=Generic \
+        -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+        -DCMAKE_SYSROOT="${sysroot_location}" \
+        -DCMAKE_INSTALL_PREFIX="${Z_INSTALL_LOCATION}" \
+        -DCMAKE_LINKER_TYPE=LLD \
         -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
         -DCMAKE_BUILD_TYPE=Release \
         -DC_INCLUDE_DIRS="${sysroot_location}/usr/include" \
