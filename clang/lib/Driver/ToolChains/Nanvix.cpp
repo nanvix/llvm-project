@@ -58,6 +58,14 @@ void Nanvix::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
   }
 }
 
+Tool *Nanvix::buildLinker() const {
+  return new tools::nanvix::Linker(*this);
+}
+
+Tool *Nanvix::buildAssembler() const {
+  return new tools::nanvix::Assembler(*this);
+}
+
 void Nanvix::AddClangCXXStdlibIncludeArgs(
     const llvm::opt::ArgList &DriverArgs,
     llvm::opt::ArgStringList &CC1Args) const {
