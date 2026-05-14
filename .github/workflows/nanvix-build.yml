@@ -84,3 +84,20 @@ jobs:
 
     - name: Install LLVM (stage 0)
       run: ./z install
+
+    - name: Configure LLVM (stage 1)
+      run: ./z configure --install-location=${{ env.INSTALL_LOCATION }} --sysroot-location=${{ env.INSTALL_LOCATION }} --stage=1
+
+    - name: Build LLVM (stage 1)
+      run: ./z build
+
+    - name: Install LLVM (stage 1)
+      run: ./z install
+
+    - name: Verify libc++ artifacts
+      run: |
+        echo "Checking libc++ artifacts..."
+        test -f ${{ env.INSTALL_LOCATION }}/lib/libc++.a
+        test -f ${{ env.INSTALL_LOCATION }}/lib/libc++abi.a
+        test -f ${{ env.INSTALL_LOCATION }}/lib/libunwind.a
+        echo "All C++ runtime libraries present."
