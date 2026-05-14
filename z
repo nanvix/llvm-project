@@ -122,6 +122,21 @@ download_steps() {
             print_error "Stage 1 requires a sysroot at '${sysroot_location}'."
             return 1
         fi
+
+        # If C headers are missing, download the GCC toolchain as a bootstrap sysroot.
+        if [[ ! -f "${sysroot_location}/usr/include/stdlib.h" ]]; then
+            print_info "Stage 1: C headers not found; downloading GCC sysroot..."
+            local gcc_tar_bz2_file
+            gcc_tar_bz2_file=$(download "$GCC_URL" "$GCC_SHA256_CHECKSUM") || {
+                print_error "Failed to download GCC sysroot."
+                return 1
+            }
+            extract_tar_bz2 "$gcc_tar_bz2_file" "${sysroot_location}" || {
+                print_error "Failed to extract GCC sysroot."
+                return 1
+            }
+        fi
+
         print_info "Stage 1: using existing sysroot at '${sysroot_location}'."
         return 0
     fi
@@ -242,11 +257,15 @@ configure_stage1() {
 
     cmake -S runtimes -B build-runtimes -G Ninja \
         -DCMAKE_VERBOSE_MAKEFILE=ON \
+        -DCMAKE_SYSTEM_NAME=Linux \
+        -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
         -DCMAKE_C_COMPILER="${Z_INSTALL_LOCATION}/bin/clang" \
         -DCMAKE_CXX_COMPILER="${Z_INSTALL_LOCATION}/bin/clang++" \
+        -DCMAKE_C_COMPILER_TARGET=i686-unknown-nanvix \
+        -DCMAKE_CXX_COMPILER_TARGET=i686-unknown-nanvix \
+        -DCMAKE_SYSROOT="${sysroot_location}" \
         -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
         -DCMAKE_BUILD_TYPE=Release \
-        -DC_INCLUDE_DIRS="${sysroot_location}/usr/include" \
         "${cmake_launcher_options[@]}" \
         "${compiler_rt_options[@]}" \
         "${libcxx_options[@]}" \
