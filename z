@@ -503,6 +503,37 @@ verify_artifacts() {
 #
 # Description
 #
+#   Runs the Nanvix clang driver lit tests to verify the linker invocation
+#   produced by the toolchain matches expected behavior.
+#
+# Usage
+#
+#   Called automatically by './z test'.
+#
+test_driver() {
+    local lit="${SCRIPT_DIR}/build/bin/llvm-lit"
+    if [[ ! -d "${SCRIPT_DIR}/build" ]]; then
+        echo "Skipping driver tests: build directory not found."
+        return 0
+    fi
+    if [[ ! -x "$lit" ]]; then
+        echo "ERROR: build directory exists but llvm-lit not found at '${lit}'."
+        return 1
+    fi
+    echo "Running Nanvix driver tests..."
+    "$lit" "${SCRIPT_DIR}/clang/test/Driver/nanvix.c" \
+           "${SCRIPT_DIR}/clang/test/Driver/nanvix.cpp" \
+        --no-progress-bar -v || {
+        echo "ERROR: Driver tests failed."
+        return 1
+    }
+    echo "Driver tests passed."
+    return 0
+}
+
+#
+# Description
+#
 #   Runs the C++ smoke test: compiles and links a minimal C++ program using the
 #   built clang toolchain and libc++ for the i686-unknown-nanvix target.
 #
@@ -659,6 +690,7 @@ fi
 if [[ "${1:-}" == "test" ]]; then
     # Load saved configuration if available.
     _load_project_config 2>/dev/null || true
+    test_driver || exit $?
     test_smoke || exit $?
 
     # Run integration test if KVM is available.
