@@ -135,9 +135,15 @@ download_steps() {
                 print_error "Failed to extract GCC sysroot."
                 return 1
             }
-        fi
 
-        print_info "Stage 1: using existing sysroot at '${sysroot_location}'."
+            if [[ ! -f "${sysroot_location}/usr/include/stdlib.h" ]]; then
+                print_error "Stage 1: C headers still missing after extracting GCC sysroot."
+                return 1
+            fi
+            print_info "Stage 1: GCC sysroot downloaded to '${sysroot_location}'."
+        else
+            print_info "Stage 1: C headers found at '${sysroot_location}'."
+        fi
         return 0
     fi
 
@@ -201,6 +207,10 @@ configure_stage0() {
 configure_stage1() {
     local sysroot_location="${Z_SYSROOT_LOCATION:-${Z_INSTALL_LOCATION}}"
 
+    # Extract LLVM version for compiler-rt install path.
+    local llvm_version_major
+    llvm_version_major=$(sed -n 's/.*LLVM_VERSION_MAJOR \([0-9]*\).*/\1/p' cmake/Modules/LLVMVersion.cmake)
+
     # Config options for compiler-rt.
     local compiler_rt_options=(
         -DCOMPILER_RT_BUILD_BUILTINS=ON
@@ -217,6 +227,8 @@ configure_stage1() {
         -DCOMPILER_RT_BUILD_SANITIZERS=OFF
         -DCOMPILER_RT_BUILD_XRAY=OFF
         -DCOMPILER_RT_BUILD_ORC=OFF
+        -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON
+        -DCOMPILER_RT_INSTALL_LIBRARY_DIR="${Z_INSTALL_LOCATION}/lib/clang/${llvm_version_major}/lib/i686-unknown-nanvix"
     )
 
     # Config options for libc++.

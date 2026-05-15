@@ -100,4 +100,5 @@ jobs:
         test -f ${{ env.INSTALL_LOCATION }}/lib/libc++.a
         test -f ${{ env.INSTALL_LOCATION }}/lib/libc++abi.a
         test -f ${{ env.INSTALL_LOCATION }}/lib/libunwind.a
+        ls ${{ env.INSTALL_LOCATION }}/lib/clang/*/lib/i686-unknown-nanvix/libclang_rt.builtins*.a
         echo "All C++ runtime libraries present."
