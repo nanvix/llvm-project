@@ -60,6 +60,9 @@ source "${utils_script}"
 # Z Constants
 #==================================================================================================
 
+# Directory containing this script (resolves symlinks).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Project Name
 readonly Z_PROJECT_NAME="LLVM"
 # Directory used when building, empty if not required.
@@ -73,6 +76,7 @@ readonly -A Z_PROJECT_REQUIRED_TOOLS=(
     ["bzip2"]="1.0.8"
     ["tar"]="1.34.0"
     ["cmake"]="3.28.3"
+    ["gh"]="2.0.0"
 )
 
 # Required System Packages for Setup
@@ -457,6 +461,214 @@ install_steps() {
 #==================================================================================================
 # Main Script
 #==================================================================================================
+
+#
+# Description
+#
+#   Verifies that all expected toolchain artifacts are present after installation.
+#
+# Usage
+#
+#   ./z verify
+#
+verify_artifacts() {
+    local install_location="${Z_INSTALL_LOCATION:-/opt/nanvix}"
+
+    echo "Checking libc++ artifacts..."
+    local failed=0
+
+    for lib in libc++.a libc++abi.a libunwind.a; do
+        if [[ ! -f "${install_location}/lib/${lib}" ]]; then
+            echo "ERROR: ${install_location}/lib/${lib} not found."
+            failed=1
+        fi
+    done
+
+    local builtins
+    builtins=$(find "${install_location}/lib/clang" -path "*/i686-unknown-nanvix/libclang_rt.builtins*.a" 2>/dev/null | head -1)
+    if [[ -z "$builtins" ]]; then
+        echo "ERROR: compiler-rt builtins library not found."
+        failed=1
+    fi
+
+    if [[ $failed -ne 0 ]]; then
+        echo "ERROR: Artifact verification failed."
+        return 1
+    fi
+
+    echo "All C++ runtime libraries present."
+    return 0
+}
+
+#
+# Description
+#
+#   Runs the C++ smoke test: compiles and links a minimal C++ program using the
+#   built clang toolchain and libc++ for the i686-unknown-nanvix target.
+#
+#   Requires the toolchain to be already built and installed, and downloads the
+#   latest Nanvix release to obtain libposix.a and user.ld.
+#
+# Usage
+#
+#   ./z test
+#
+test_smoke() {
+    local install_location="${Z_INSTALL_LOCATION:-/opt/nanvix}"
+
+    if [[ ! -x "${install_location}/bin/clang++" ]]; then
+        echo "ERROR: clang++ not found at '${install_location}/bin/clang++'. Build and install first."
+        return 1
+    fi
+
+    # Download Nanvix release for libposix.a and user.ld if not already present.
+    # Pinned to a specific version for reproducibility.
+    local nanvix_release_tag="v0.13.16"
+    if [[ ! -f "${install_location}/lib/libposix.a" ]] || \
+       [[ ! -f "${install_location}/lib/user.ld" ]]; then
+        echo "Downloading Nanvix release ${nanvix_release_tag}..."
+        local nanvix_dir
+        nanvix_dir="$(mktemp -d)"
+        gh release download "${nanvix_release_tag}" --repo nanvix/nanvix \
+            --pattern 'nanvix-x86-microvm-multi-process-release-128mb-*.tar.bz2' \
+            --dir "$nanvix_dir" || {
+            echo "ERROR: Failed to download Nanvix release. Ensure 'gh' is installed and authenticated."
+            rm -rf "$nanvix_dir"
+            return 1
+        }
+        local archive
+        archive=$(find "$nanvix_dir" -maxdepth 1 -name 'nanvix-x86-microvm-multi-process-release-128mb-*.tar.bz2')
+        if [[ -z "$archive" ]]; then
+            echo "ERROR: No matching archive found in download directory."
+            rm -rf "$nanvix_dir"
+            return 1
+        fi
+        if [[ $(echo "$archive" | wc -l) -ne 1 ]]; then
+            echo "ERROR: Multiple matching archives found; expected exactly one."
+            rm -rf "$nanvix_dir"
+            return 1
+        fi
+        tar -xjf "$archive" -C "$nanvix_dir"
+        install -m 644 "$nanvix_dir/lib/libposix.a" "${install_location}/lib/"
+        install -m 644 "$nanvix_dir/lib/user.ld" "${install_location}/lib/"
+        # Install nanvixd binaries for integration tests.
+        mkdir -p "${install_location}/libexec/nanvixd"
+        install -m 755 "$nanvix_dir/bin/nanvixd.elf" "${install_location}/libexec/nanvixd/"
+        install -m 755 "$nanvix_dir/bin/kernel.elf" "${install_location}/libexec/nanvixd/"
+        install -m 755 "$nanvix_dir/bin/linuxd.elf" "${install_location}/libexec/nanvixd/"
+        install -m 755 "$nanvix_dir/bin/uservm.elf" "${install_location}/libexec/nanvixd/"
+        rm -rf "$nanvix_dir"
+    else
+        echo "Nanvix OS libraries already present in '${install_location}/lib/'."
+    fi
+
+    echo "Compiling and linking C++ smoke test..."
+    local smoke_test_bin="${SCRIPT_DIR}/build/tests/smoke/hello.elf"
+    mkdir -p "$(dirname "$smoke_test_bin")"
+    "${install_location}/bin/clang++" \
+        --target=i686-unknown-nanvix \
+        --sysroot="${install_location}" \
+        -stdlib=libc++ \
+        -lposix \
+        -T "${install_location}/lib/user.ld" \
+        tests/smoke/hello.cpp \
+        -o "$smoke_test_bin" || {
+        echo "ERROR: Smoke test failed to compile and link."
+        rm -f "$smoke_test_bin"
+        return 1
+    }
+
+    file "$smoke_test_bin"
+    echo "Smoke test passed: C++ program compiled and linked successfully."
+    # Export path for integration test.
+    SMOKE_TEST_BIN="$smoke_test_bin"
+    return 0
+}
+
+#
+# Description
+#
+#   Runs the compiled C++ hello-world app on nanvixd.elf.
+#   Requires /dev/kvm to be available.
+#
+# Parameters
+#
+#   $1: Path to the smoke test binary.
+#
+# Usage
+#
+#   Called automatically by './z test' when /dev/kvm is available.
+#
+test_integration() {
+    local smoke_test_bin="$1"
+    local install_location="${Z_INSTALL_LOCATION:-/opt/nanvix}"
+
+    if [[ ! -f "${smoke_test_bin}" ]]; then
+        echo "ERROR: Smoke test binary not found at '${smoke_test_bin}'."
+        return 1
+    fi
+
+    local nanvixd="${install_location}/libexec/nanvixd/nanvixd.elf"
+    if [[ ! -f "${nanvixd}" ]]; then
+        echo "ERROR: nanvixd.elf not found at '${nanvixd}'. Run test_smoke first."
+        return 1
+    fi
+
+    echo "Running integration test: hello.cpp on nanvixd.elf..."
+    local timeout_seconds=30
+    local output
+    output="$(timeout "${timeout_seconds}" \
+        "${nanvixd}" \
+            -bin-dir "${install_location}/libexec/nanvixd" \
+            -console-file /dev/stdout \
+            -- "${smoke_test_bin}" </dev/null 2>&1)" || {
+        local rc=$?
+        if [[ $rc -eq 124 ]]; then
+            echo "ERROR: Integration test timed out after ${timeout_seconds}s."
+        else
+            echo "ERROR: Integration test failed (exit code $rc)."
+        fi
+        echo "Output:"
+        echo "$output"
+        return 1
+    }
+
+    echo "$output"
+
+    # Verify expected output from the hello-world program.
+    if echo "$output" | grep -q "value = 42"; then
+        echo "Integration test passed: program ran successfully on nanvixd.elf."
+    else
+        echo "ERROR: Expected output 'value = 42' not found."
+        return 1
+    fi
+
+    return 0
+}
+
+# Intercept 'verify' and 'test' commands before delegating to zmain.
+# NOTE: The z framework (utils.sh) does not support registering custom
+# subcommands; its command set is hardcoded. Intercepting $1 before zmain is
+# the intended extension pattern. These commands won't appear in './z help'.
+if [[ "${1:-}" == "verify" ]]; then
+    _load_project_config 2>/dev/null || true
+    verify_artifacts
+    exit $?
+fi
+
+if [[ "${1:-}" == "test" ]]; then
+    # Load saved configuration if available.
+    _load_project_config 2>/dev/null || true
+    test_smoke || exit $?
+
+    # Run integration test if KVM is available.
+    if [[ -c /dev/kvm ]] && [[ -n "${SMOKE_TEST_BIN:-}" ]]; then
+        test_integration "${SMOKE_TEST_BIN}" || exit $?
+    else
+        echo "Skipping integration test: /dev/kvm not available or smoke test binary not set."
+    fi
+    exit 0
+fi
 
 # Run main function with all arguments
 zmain "$@" || {

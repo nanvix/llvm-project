@@ -94,11 +94,18 @@ jobs:
     - name: Install LLVM (stage 1)
       run: ./z install
 
-    - name: Verify libc++ artifacts
+    - name: Enable KVM
       run: |
-        echo "Checking libc++ artifacts..."
-        test -f ${{ env.INSTALL_LOCATION }}/lib/libc++.a
-        test -f ${{ env.INSTALL_LOCATION }}/lib/libc++abi.a
-        test -f ${{ env.INSTALL_LOCATION }}/lib/libunwind.a
-        ls ${{ env.INSTALL_LOCATION }}/lib/clang/*/lib/i686-unknown-nanvix/libclang_rt.builtins*.a
-        echo "All C++ runtime libraries present."
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+          | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        ls -l /dev/kvm
+
+    - name: Verify libc++ artifacts
+      run: ./z verify
+
+    - name: "Smoke test: compile and link C++ with libc++"
+      run: ./z test
+      env:
+        GH_TOKEN: ${{ github.token }}
