@@ -1,21 +1,35 @@
 # Copyright(c) The Maintainers of Nanvix.
 # Licensed under the MIT License.
 
-name: Release Pipeline
+name: CI/CD Pipeline
 
 #==================================================================================================
 # Trigger Conditions
 #==================================================================================================
 
 on:
+  pull_request:
+    types:
+      - 'opened'
+      - 'synchronize'
+      - 'reopened'
+      - 'ready_for_review'
+    branches:
+      - 'dev'
+
+  push:
+    branches:
+      - 'dev'
+
   repository_dispatch:
     types:
       - binutils-release
       - newlib-clang-release
 
+# Cancel previous running actions for the same PR (but not for releases)
 concurrency:
-  group: release-llvm
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'repository_dispatch' && 'release-llvm' || format('{0}-{1}', github.workflow, github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'repository_dispatch' && github.ref != 'refs/heads/dev' }}
 
 #==================================================================================================
 # Environment Variables
@@ -32,7 +46,89 @@ env:
 #==================================================================================================
 
 jobs:
+
+  #================================================================================================
+  # Build Job
+  #================================================================================================
+
+  build:
+    # Only run for push/PR events (not repository_dispatch).
+    # For PRs, only run for non-draft PRs with allowed branch prefixes.
+    if: |
+      github.event_name != 'repository_dispatch' && (
+        github.event_name != 'pull_request' ||
+        (
+          !github.event.pull_request.draft &&
+          (
+            startsWith(github.head_ref, 'enhancement-') ||
+            startsWith(github.head_ref, 'feature-') ||
+            startsWith(github.head_ref, 'bugfix-') ||
+            startsWith(github.head_ref, 'dependabot/') ||
+            startsWith(github.head_ref, 'copilot/')
+          )
+        )
+      )
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Restore sccache cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/sccache
+        key: ${{ runner.os }}-sccache
+        restore-keys: |
+          ${{ runner.os }}-sccache
+
+    - name: Enable Compiler Caching
+      uses: mozilla-actions/sccache-action@v0.0.9
+
+    - name: Install dependencies
+      run: sudo ./z setup
+
+    - name: Configure LLVM (stage 0)
+      run: ./z configure --install-location=${{ env.INSTALL_LOCATION }} --stage=0
+
+    - name: Build LLVM (stage 0)
+      run: ./z build
+
+    - name: Install LLVM (stage 0)
+      run: ./z install
+
+    - name: Configure LLVM (stage 1)
+      run: ./z configure --install-location=${{ env.INSTALL_LOCATION }} --sysroot-location=${{ env.INSTALL_LOCATION }} --stage=1
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Build LLVM (stage 1)
+      run: ./z build
+
+    - name: Install LLVM (stage 1)
+      run: ./z install
+
+    - name: Enable KVM
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+          | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        ls -l /dev/kvm
+
+    - name: Verify libc++ artifacts
+      run: ./z verify
+
+    - name: "Smoke test: compile and link C and C++ programs"
+      run: ./z test
+
+  #================================================================================================
+  # Release Job
+  #================================================================================================
+
   release:
+    # Only run for repository_dispatch events.
+    if: github.event_name == 'repository_dispatch'
     runs-on: ubuntu-24.04
 
     permissions:
