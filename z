@@ -92,11 +92,9 @@ BUILD_TARGETS=("all")
 # Install Targets
 INSTALL_TARGETS=("install")
 
-# GCC (used only when building without staged mode and no sysroot provided)
-readonly GCC_VERSION="12.4.0"
-readonly GCC_SHORT_COMMIT_HASH="9af215ccf6f"
-readonly GCC_URL="https://github.com/nanvix/gcc/releases/download/nanvix-v${GCC_VERSION}-${GCC_SHORT_COMMIT_HASH}/nanvix-gcc-${GCC_VERSION}-${GCC_SHORT_COMMIT_HASH}-stage1.tar.bz2"
-readonly GCC_SHA256_CHECKSUM="sha256:5411a62fab815ad0d6a4cad919c49ffe666c63caba4310ed0680ca9c7cd0a36f"
+# Newlib release (provides C headers and libc)
+readonly NEWLIB_RELEASE_TAG="nanvix-v4.4.0-e1c9d0d4c"
+readonly NEWLIB_RELEASE_PATTERN="nanvix-newlib-*.tar.bz2"
 
 # Nanvix OS release (used to obtain libposix.a, user.ld, and nanvixd binaries)
 readonly NANVIX_RELEASE_TAG="v0.13.16"
@@ -131,24 +129,40 @@ download_steps() {
             return 1
         fi
 
-        # If C headers are missing, download the GCC toolchain as a bootstrap sysroot.
+        # If C headers are missing, download newlib as a bootstrap sysroot.
         if [[ ! -f "${sysroot_location}/usr/include/stdlib.h" ]]; then
-            print_info "Stage 1: C headers not found; downloading GCC sysroot..."
-            local gcc_tar_bz2_file
-            gcc_tar_bz2_file=$(download "$GCC_URL" "$GCC_SHA256_CHECKSUM") || {
-                print_error "Failed to download GCC sysroot."
-                return 1
-            }
-            extract_tar_bz2 "$gcc_tar_bz2_file" "${sysroot_location}" || {
-                print_error "Failed to extract GCC sysroot."
-                return 1
-            }
+            print_info "Stage 1: C headers not found; downloading newlib..."
 
-            if [[ ! -f "${sysroot_location}/usr/include/stdlib.h" ]]; then
-                print_error "Stage 1: C headers still missing after extracting GCC sysroot."
+            local tmp_dir
+            tmp_dir="$(mktemp -d)"
+
+            # Download and extract newlib (C headers and libc).
+            gh release download "${NEWLIB_RELEASE_TAG}" --repo nanvix/newlib \
+                --pattern "${NEWLIB_RELEASE_PATTERN}" \
+                --dir "$tmp_dir" || {
+                print_error "Failed to download newlib release."
+                rm -rf "$tmp_dir"
+                return 1
+            }
+            local newlib_archive
+            newlib_archive=$(find "$tmp_dir" -maxdepth 1 -name "${NEWLIB_RELEASE_PATTERN}" | head -1)
+            if [[ -z "$newlib_archive" ]]; then
+                print_error "No newlib archive found after download."
+                rm -rf "$tmp_dir"
                 return 1
             fi
-            print_info "Stage 1: GCC sysroot downloaded to '${sysroot_location}'."
+            extract_tar_bz2 "$newlib_archive" "${sysroot_location}" || {
+                print_error "Failed to extract newlib."
+                rm -rf "$tmp_dir"
+                return 1
+            }
+            rm -rf "$tmp_dir"
+
+            if [[ ! -f "${sysroot_location}/usr/include/stdlib.h" ]]; then
+                print_error "Stage 1: C headers still missing after extracting newlib."
+                return 1
+            fi
+            print_info "Stage 1: newlib downloaded to '${sysroot_location}'."
         else
             print_info "Stage 1: C headers found at '${sysroot_location}'."
         fi
@@ -200,22 +214,8 @@ download_steps() {
         return 0
     fi
 
-    # Legacy (no stage specified): download GCC if sysroot location is not set.
-    if [[ -z "${Z_SYSROOT_LOCATION}" ]]; then
-        local sysroot_location="${Z_INSTALL_LOCATION}"
-
-        local gcc_tar_bz2_file
-        gcc_tar_bz2_file=$(download "$GCC_URL" "$GCC_SHA256_CHECKSUM") || {
-            print_error "Failed to download GCC."
-            return 1
-        }
-        extract_tar_bz2 "$gcc_tar_bz2_file" "${sysroot_location}" || {
-            print_error "Failed to extract GCC."
-            return 1
-        }
-    fi
-
-    return 0
+    print_error "No build stage specified. Use --stage=0 or --stage=1."
+    return 1
 }
 
 #
@@ -346,89 +346,6 @@ configure_stage1() {
 #
 # Description
 #
-#   Configures a legacy (non-staged) LLVM build with Clang + runtimes.
-#
-configure_legacy() {
-    local sysroot_location="${Z_INSTALL_LOCATION}"
-
-    # Config options for compiler-rt.
-    local compiler_rt_options=(
-        -DCOMPILER_RT_BUILD_BUILTINS=ON
-        -DCOMPILER_RT_BUILD_CRT=OFF
-        -DCOMPILER_RT_USE_LIBCXX=OFF
-        -DCOMPILER_RT_CXX_LIBRARY=none
-        -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF
-        -DCOMPILER_RT_BAREMETAL_BUILD=ON
-        -DCOMPILER_RT_BUILD_GWP_ASAN=OFF
-        -DCOMPILER_RT_BUILD_LIBFUZZER=OFF
-        -DCOMPILER_RT_BUILD_MEMPROF=OFF
-        -DCOMPILER_RT_BUILD_PROFILE=OFF
-        -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF
-        -DCOMPILER_RT_BUILD_SANITIZERS=OFF
-        -DCOMPILER_RT_BUILD_XRAY=OFF
-        -DCOMPILER_RT_BUILD_ORC=OFF
-    )
-
-    # Config options for libc++.
-    local libcxx_options=(
-        -DLIBCXX_ENABLE_SHARED=OFF
-        -DLIBCXX_ENABLE_STATIC=ON
-        -DLIBCXX_INCLUDE_TESTS=OFF
-        -DLIBCXX_INCLUDE_BENCHMARKS=OFF
-        -DLIBCXX_ENABLE_TIME_ZONE_DATABASE=OFF
-        -DLIBCXX_HAS_MUSL_LIBC=OFF
-    )
-
-    # Config options for libunwind.
-    local libunwind_options=(
-        -DLIBUNWIND_ENABLE_STATIC=ON
-        -DLIBUNWIND_ENABLE_SHARED=OFF
-        -DLIBUNWIND_USE_COMPILER_RT=ON
-        -DLIBUNWIND_IS_BAREMETAL=ON
-        -DLIBUNWIND_ADDITIONAL_COMPILE_FLAGS='-mno-sse;-mno-sse2'
-    )
-
-    # Config options for libcxxabi.
-    local libcxxabi_options=(
-        -DLIBCXXABI_USE_COMPILER_RT=ON
-        -DLIBCXXABI_ENABLE_STATIC_UNWINDER=ON
-        -DLIBCXXABI_ENABLE_STATIC=ON
-        -DLIBCXXABI_ENABLE_SHARED=OFF
-    )
-
-    # Use sccache as compiler launcher if available.
-    local cmake_launcher_options=()
-    if command -v sccache >/dev/null 2>&1; then
-        cmake_launcher_options+=(
-            -DCMAKE_C_COMPILER_LAUNCHER=sccache
-            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
-        )
-    fi
-
-    cmake -S llvm -B build -G Ninja \
-        -DCMAKE_VERBOSE_MAKEFILE=ON \
-        -DLLVM_PARALLEL_LINK_JOBS=1 \
-        -DLLVM_ENABLE_PROJECTS=clang \
-        -DLLVM_TARGETS_TO_BUILD=X86 \
-        -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DC_INCLUDE_DIRS="${sysroot_location}/usr/include" \
-        -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
-        "${cmake_launcher_options[@]}" \
-        "${compiler_rt_options[@]}" \
-        "${libcxx_options[@]}" \
-        "${libunwind_options[@]}" \
-        "${libcxxabi_options[@]}" || {
-        print_error "Configuration failed."
-        return 1
-    }
-
-    return 0
-}
-
-#
-# Description
-#
 #   Executes project-specific steps for configuring a build.
 #
 # Return Value
@@ -446,7 +363,8 @@ configure_steps() {
     elif [[ "${Z_STAGE}" == "1" ]]; then
         configure_stage1
     else
-        configure_legacy
+        print_error "No build stage specified. Use --stage=0 or --stage=1."
+        return 1
     fi
 }
 
