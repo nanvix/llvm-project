@@ -107,5 +107,5 @@ jobs:
     - name: Verify libc++ artifacts
       run: ./z verify
 
-    - name: "Smoke test: compile and link C++ with libc++"
+    - name: "Smoke test: compile and link C and C++ programs"
       run: ./z test

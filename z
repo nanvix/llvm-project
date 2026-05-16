@@ -594,7 +594,7 @@ test_driver() {
 #
 #   ./z test
 #
-test_smoke() {
+test_smoke_cpp() {
     local install_location="${Z_INSTALL_LOCATION:-/opt/nanvix}"
 
     if [[ ! -x "${install_location}/bin/clang++" ]]; then
@@ -645,7 +645,76 @@ test_smoke() {
     file "$smoke_test_bin"
     echo "Smoke test passed: C++ program compiled and linked successfully."
     # Export path for integration test.
-    SMOKE_TEST_BIN="$smoke_test_bin"
+    SMOKE_TEST_BIN_CPP="$smoke_test_bin"
+    return 0
+}
+
+#
+# Description
+#
+#   Runs the C smoke test: compiles and links a minimal C program using the
+#   built clang toolchain and newlib (libc.a) for the i686-unknown-nanvix target.
+#
+#   Requires the toolchain to be already built and installed. The Nanvix OS
+#   libraries (libposix.a, user.ld) must already be present in the install
+#   location (downloaded by download_steps).
+#
+# Usage
+#
+#   Called automatically by './z test' before test_smoke_cpp.
+#
+test_smoke_c() {
+    local install_location="${Z_INSTALL_LOCATION:-/opt/nanvix}"
+
+    if [[ ! -x "${install_location}/bin/clang" ]]; then
+        echo "ERROR: clang not found at '${install_location}/bin/clang'. Build and install first."
+        return 1
+    fi
+
+    # Resolve libc.a through the driver to handle target-specific sysroot paths.
+    local libc_archive
+    if ! libc_archive=$("${install_location}/bin/clang" \
+        --target=i686-unknown-nanvix \
+        --sysroot="${install_location}" \
+        --print-file-name=libc.a); then
+        echo "ERROR: failed to resolve libc.a with clang --print-file-name."
+        return 1
+    fi
+    if [[ ! -f "$libc_archive" ]]; then
+        echo "ERROR: libc not found (resolved to '$libc_archive'). Build and install first."
+        return 1
+    fi
+
+    if [[ ! -f "${install_location}/lib/libposix.a" ]]; then
+        echo "ERROR: libposix.a not found at '${install_location}/lib/libposix.a'. Build and install first."
+        return 1
+    fi
+
+    if [[ ! -f "${install_location}/lib/user.ld" ]]; then
+        echo "ERROR: user.ld not found at '${install_location}/lib/user.ld'. Build and install first."
+        return 1
+    fi
+
+    echo "Compiling and linking C smoke test..."
+    local smoke_test_bin="${SCRIPT_DIR}/build/tests/smoke/hello-c.elf"
+    mkdir -p "$(dirname "$smoke_test_bin")"
+    "${install_location}/bin/clang" \
+        --target=i686-unknown-nanvix \
+        --sysroot="${install_location}" \
+        tests/smoke/hello.c \
+        -lc \
+        -lposix \
+        -T "${install_location}/lib/user.ld" \
+        -o "$smoke_test_bin" || {
+        echo "ERROR: C smoke test failed to compile and link."
+        rm -f "$smoke_test_bin"
+        return 1
+    }
+
+    file "$smoke_test_bin"
+    echo "C smoke test passed: program compiled and linked successfully."
+    # Export path for integration test.
+    SMOKE_TEST_BIN_C="$smoke_test_bin"
     return 0
 }
 
@@ -724,13 +793,19 @@ if [[ "${1:-}" == "test" ]]; then
     # Load saved configuration if available.
     _load_project_config 2>/dev/null || true
     test_driver || exit $?
-    test_smoke || exit $?
+    test_smoke_c || exit $?
+    test_smoke_cpp || exit $?
 
-    # Run integration test if KVM is available.
-    if [[ -c /dev/kvm ]] && [[ -n "${SMOKE_TEST_BIN:-}" ]]; then
-        test_integration "${SMOKE_TEST_BIN}" || exit $?
+    # Run integration tests if KVM is available.
+    if [[ -c /dev/kvm ]]; then
+        if [[ -n "${SMOKE_TEST_BIN_C:-}" ]]; then
+            test_integration "${SMOKE_TEST_BIN_C}" || exit $?
+        fi
+        if [[ -n "${SMOKE_TEST_BIN_CPP:-}" ]]; then
+            test_integration "${SMOKE_TEST_BIN_CPP}" || exit $?
+        fi
     else
-        echo "Skipping integration test: /dev/kvm not available or smoke test binary not set."
+        echo "Skipping integration tests: /dev/kvm not available."
     fi
     exit 0
 fi
