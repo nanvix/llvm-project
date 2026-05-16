@@ -56,3 +56,58 @@
 
 // CHECK-STATIC: {{.*}}ld.lld
 // CHECK-STATIC: "-Bstatic"
+
+// Verify the linker is NOT the gcc wrapper.
+// RUN: %clang -### %s --target=i686-unknown-nanvix \
+// RUN:     -resource-dir=%S/Inputs/resource_dir_with_per_target_subdir \
+// RUN:     --sysroot=%S/Inputs/basic_nanvix_tree 2>&1 \
+// RUN:     | FileCheck -check-prefix=CHECK-NO-GCC %s
+
+// CHECK-NO-GCC-NOT: i686-unknown-nanvix-gcc
+// CHECK-NO-GCC-NOT: i686-nanvix-gcc
+
+// Verify the assembler is invoked directly (not via gcc).
+// RUN: %clang -### %s --target=i686-unknown-nanvix -c -no-integrated-as \
+// RUN:     -resource-dir=%S/Inputs/resource_dir_with_per_target_subdir \
+// RUN:     --sysroot=%S/Inputs/basic_nanvix_tree 2>&1 \
+// RUN:     | FileCheck -check-prefix=CHECK-AS %s
+
+// CHECK-AS: "{{.*}}as"
+// CHECK-AS-NOT: "{{.*}}gcc"
+
+// Verify system include paths are resolved (resource-dir builtin headers).
+// RUN: %clang -### %s --target=i686-unknown-nanvix -fsyntax-only \
+// RUN:     -resource-dir=%S/Inputs/resource_dir_with_per_target_subdir \
+// RUN:     --sysroot=%S/Inputs/basic_nanvix_tree 2>&1 \
+// RUN:     | FileCheck -check-prefix=CHECK-INCLUDES %s
+
+// CHECK-INCLUDES: "-internal-isystem" "{{.*}}/resource_dir_with_per_target_subdir/include"
+
+// Verify -nostdinc disables all system include paths.
+// RUN: %clang -### %s --target=i686-unknown-nanvix -fsyntax-only \
+// RUN:     -nostdinc \
+// RUN:     -resource-dir=%S/Inputs/resource_dir_with_per_target_subdir \
+// RUN:     --sysroot=%S/Inputs/basic_nanvix_tree 2>&1 \
+// RUN:     | FileCheck -check-prefix=CHECK-NOSTDINC %s
+
+// CHECK-NOSTDINC: "-cc1"
+// CHECK-NOSTDINC-NOT: "-internal-isystem"
+
+// Verify -nostdlibinc keeps builtin includes but suppresses sysroot includes.
+// RUN: %clang -### %s --target=i686-unknown-nanvix -fsyntax-only \
+// RUN:     -nostdlibinc \
+// RUN:     -resource-dir=%S/Inputs/resource_dir_with_per_target_subdir \
+// RUN:     --sysroot=%S/Inputs/basic_nanvix_tree 2>&1 \
+// RUN:     | FileCheck -check-prefix=CHECK-NOSTDLIBINC %s
+
+// CHECK-NOSTDLIBINC: "-internal-isystem" "{{.*}}/resource_dir_with_per_target_subdir/include"
+
+// Verify -nobuiltininc suppresses builtin includes from resource dir.
+// RUN: %clang -### %s --target=i686-unknown-nanvix -fsyntax-only \
+// RUN:     -nobuiltininc \
+// RUN:     -resource-dir=%S/Inputs/resource_dir_with_per_target_subdir \
+// RUN:     --sysroot=%S/Inputs/basic_nanvix_tree 2>&1 \
+// RUN:     | FileCheck -check-prefix=CHECK-NOBUILTININC %s
+
+// CHECK-NOBUILTININC: "-cc1"
+// CHECK-NOBUILTININC-NOT: "-internal-isystem" "{{.*}}/resource_dir_with_per_target_subdir/include"
