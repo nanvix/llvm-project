@@ -429,7 +429,7 @@ jobs:
 
   update-pinned-tags:
     needs: release
-    if: github.event_name == 'repository_dispatch'
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'newlib-clang-release'
     runs-on: ubuntu-24.04
 
     permissions:
@@ -453,23 +453,26 @@ jobs:
         NEWLIB_TAG: ${{ github.event.client_payload.newlib_tag }}
       run: |
         set -euo pipefail
+
+        # Validate tag format to prevent sed injection.
+        if [[ -n "${NEWLIB_TAG:-}" ]] && ! [[ "${NEWLIB_TAG}" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+          echo "::error::Invalid NEWLIB_TAG format: '${NEWLIB_TAG}'"
+          exit 1
+        fi
+
         CHANGES=""
 
         if [[ -n "${NEWLIB_TAG:-}" ]]; then
           CURRENT=$(grep -oP 'readonly NEWLIB_RELEASE_TAG="\K[^"]+' z)
           if [[ "${CURRENT}" != "${NEWLIB_TAG}" ]]; then
             sed -i "s|^readonly NEWLIB_RELEASE_TAG=\".*\"|readonly NEWLIB_RELEASE_TAG=\"${NEWLIB_TAG}\"|" z
-            CHANGES="${CHANGES}- NEWLIB_RELEASE_TAG: \`${CURRENT}\` → \`${NEWLIB_TAG}\`"$'\n'
+            CHANGES="${CHANGES}NEWLIB_RELEASE_TAG: ${CURRENT} -> ${NEWLIB_TAG}"$'\n'
           fi
         fi
 
         if [[ -n "${CHANGES}" ]]; then
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          {
-            echo "summary<<EOF"
-            echo -n "${CHANGES}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          printf '%s' "${CHANGES}" > /tmp/tag_changes.txt
         else
           echo "has_changes=false" >> "$GITHUB_OUTPUT"
           echo "No pinned tags to update."
@@ -478,19 +481,23 @@ jobs:
     - name: Create pull request
       if: steps.update.outputs.has_changes == 'true'
       env:
-        GH_TOKEN: ${{ github.token }}
+        GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
       run: |
-        BRANCH="ci/update-release-tags-$(date +%Y%m%d%H%M%S)"
+        BRANCH="feature-update-release-tags-$(date +%Y%m%d%H%M%S)"
         git checkout -b "${BRANCH}"
         git add z
         git commit -m "ci: update pinned release tags in z"
         git push origin "${BRANCH}"
+
+        cat > /tmp/pr_body.md <<'PREOF'
+        Automated PR to update pinned dependency tags in the `z` build script.
+
+        **Changes:**
+        PREOF
+        cat /tmp/tag_changes.txt >> /tmp/pr_body.md
+
         gh pr create \
           --base dev \
           --head "${BRANCH}" \
           --title "ci: update pinned release tags" \
-          --body "Automated PR to update pinned dependency tags in the \`z\` build script.
-
-**Changes:**
-${{ steps.update.outputs.summary }}
-Triggered by: \`${{ github.event.action }}\` dispatch."
+          --body-file /tmp/pr_body.md
