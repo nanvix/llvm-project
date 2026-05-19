@@ -48,6 +48,7 @@ public:
 
   bool HasNativeLLVMSupport() const override { return true; }
   bool IsMathErrnoDefault() const override { return false; }
+  bool useInitArrayDefault() const override { return false; }
 
   std::string getCompilerRTPath() const override;
 
