@@ -208,6 +208,16 @@ std::string Nanvix::getCompilerRTPath() const {
   return std::string(Path);
 }
 
+void Nanvix::addClangTargetOptions(const ArgList &DriverArgs,
+                                   ArgStringList &CC1Args,
+                                   Action::OffloadKind) const {
+  // By default, use `.ctors` (not `.init_array`), as required by GCC's
+  // crtbegin/crtend which handle constructors/destructors on Nanvix.
+  if (!DriverArgs.hasFlag(options::OPT_fuse_init_array,
+                          options::OPT_fno_use_init_array, false))
+    CC1Args.push_back("-fno-use-init-array");
+}
+
 void Nanvix::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
                                        ArgStringList &CC1Args) const {
   const Driver &D = getDriver();
