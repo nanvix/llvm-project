@@ -5,6 +5,7 @@
 
 // CHECK: "-cc1"
 // CHECK: "-triple" "i686-unknown-nanvix"
+// CHECK: "-fno-use-init-array"
 // CHECK: {{.*}}ld.lld
 // CHECK: "--sysroot=[[SYSROOT:[^"]+]]"
 // CHECK: "--build-id=none"

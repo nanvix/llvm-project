@@ -49,6 +49,11 @@ public:
   bool HasNativeLLVMSupport() const override { return true; }
   bool IsMathErrnoDefault() const override { return false; }
 
+  void addClangTargetOptions(
+      const llvm::opt::ArgList &DriverArgs,
+      llvm::opt::ArgStringList &CC1Args,
+      Action::OffloadKind DeviceOffloadKind) const override;
+
   std::string getCompilerRTPath() const override;
 
   const char *getDefaultLinker() const override { return "ld.lld"; }
