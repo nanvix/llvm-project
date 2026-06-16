@@ -35,6 +35,25 @@ Nanvix::Nanvix(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   // decision 7).  Make it a library-search path so GetFilePath() finds crt0.o
   // and -lc/-lm resolve there, without probing any GCC lib/gcc/<ver> tree.
   getFilePaths().push_back(D.SysRoot + "/" + Triple.str() + "/lib");
+
+  // compiler-rt builtins (decision 4) install under the per-target runtime
+  // directory named with the *normalized* architecture: compiler-rt canonicalises
+  // i686 -> i386 (and i586/i486 likewise), so the builtins land in
+  // <resource-dir>/lib/i386-unknown-nanvix/ while the effective triple is
+  // i686-unknown-nanvix.  The generic getTargetSubDirPath()/getRuntimePath()
+  // lookup only probes the un-normalized triple, so it never finds them.  Add
+  // the normalized per-target dir to the library search paths that
+  // getCompilerRT() scans, so AddRunTimeLibs() resolves
+  // libclang_rt.builtins.a without the caller having to spell out -rtlib paths.
+  llvm::Triple RtTriple(Triple);
+  RtTriple.setArch(Triple.getArch()); // rewrites the arch field to its canonical
+                                       // compiler-rt name (x86 -> "i386").
+  if (RtTriple.str() != Triple.str()) {
+    SmallString<128> RtPath(D.ResourceDir);
+    llvm::sys::path::append(RtPath, "lib", RtTriple.str());
+    if (getVFS().exists(RtPath))
+      getLibraryPaths().push_back(std::string(RtPath));
+  }
 }
 
 Tool *Nanvix::buildLinker() const { return new tools::nanvix::Linker(*this); }
@@ -87,14 +106,15 @@ void tools::nanvix::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-shared");
 
   // Nanvix link-line contract (doc/toolchain-migration.md §4.1, §4.3): the
-  // guest loader needs page-aligned LOAD segments and cannot handle GNU_RELRO;
-  // no build-id note is emitted; and clang's autolink (-dependent-libraries)
-  // hints for -lpthread/-ldl are ignored, since those symbols already live in
-  // libc.a (empty stub archives satisfy any residual -l).
+  // guest loader needs page-aligned LOAD segments and cannot handle GNU_RELRO,
+  // and no build-id note is emitted.  The validated linker is GNU ld (not
+  // ld.lld, §4.1): it ignores clang's ELF autolink hints (the `.deplibs`
+  // dependent-libraries records) on its own, so we must NOT pass lld's
+  // `--no-dependent-libraries` here — GNU ld rejects that option outright.  Any
+  // residual -lpthread/-ldl hints resolve against the empty stub archives.
   CmdArgs.push_back("-z");
   CmdArgs.push_back("norelro");
   CmdArgs.push_back("--build-id=none");
-  CmdArgs.push_back("--no-dependent-libraries");
 
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
@@ -154,6 +174,17 @@ void Nanvix::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
 
   if (DriverArgs.hasArg(options::OPT_nostdlibinc))
     return;
+
+  // The newlib-free Nanvix system headers (the in-tree include/*.h tree) are
+  // staged into the single canonical triple directory of the sysroot
+  // (doc/toolchain-migration.md §4.2, decision 7), NOT into <sysroot>/usr/include.
+  // Add it as an extern-"C" system include so <stdio.h>, <math.h>, ... resolve by
+  // default — mirroring the library-search path registered in the constructor.
+  if (!D.SysRoot.empty()) {
+    SmallString<128> P(D.SysRoot);
+    llvm::sys::path::append(P, getTriple().str(), "include");
+    addExternCSystemInclude(DriverArgs, CC1Args, P);
+  }
 
   // Check for configure-time C include directories.
   StringRef CIncludeDirs(C_INCLUDE_DIRS);
