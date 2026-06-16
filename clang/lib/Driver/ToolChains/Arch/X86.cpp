@@ -110,6 +110,13 @@ std::string x86::getX86TargetCPU(const Driver &D, const ArgList &Args,
     return "i586";
   case llvm::Triple::FreeBSD:
     return "i686";
+  case llvm::Triple::Nanvix:
+    // Nanvix guests run on an i686 (pentiumpro) ABI with the x87 FPU and no SSE:
+    // the kernel does not enable SSE or save/restore XMM state across context
+    // switches, so emitting SSE/SSE2 (the "pentium4" default) faults with #NM
+    // ("coprocessor not available").  Match the GCC cross-compiler
+    // (-march=pentiumpro -mfpmath=387) and the Rust guest target (cpu = i686).
+    return "i686";
   default:
     // Fallback to p4.
     return "pentium4";
