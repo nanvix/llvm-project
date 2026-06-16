@@ -162,33 +162,6 @@ configure_steps() {
         -DCOMPILER_RT_BUILD_ORC=OFF
     )
 
-    # Config options for libc++.
-    local libcxx_options=(
-        -DLIBCXX_ENABLE_SHARED=OFF
-        -DLIBCXX_ENABLE_STATIC=ON
-        -DLIBCXX_INCLUDE_TESTS=OFF
-        -DLIBCXX_INCLUDE_BENCHMARKS=OFF
-        -DLIBCXX_ENABLE_TIME_ZONE_DATABASE=OFF
-        -DLIBCXX_HAS_MUSL_LIBC=OFF
-    )
-
-    # Config options for libunwind.
-    local libunwind_options=(
-        -DLIBUNWIND_ENABLE_STATIC=ON
-        -DLIBUNWIND_ENABLE_SHARED=OFF
-        -DLIBUNWIND_USE_COMPILER_RT=ON
-        -DLIBUNWIND_IS_BAREMETAL=ON
-        -DLIBUNWIND_ADDITIONAL_COMPILE_FLAGS='-mno-sse;-mno-sse2'
-    )
-
-    # Config options for libcxxabi.
-    local libcxxabi_options=(
-        -DLIBCXXABI_USE_COMPILER_RT=ON
-        -DLIBCXXABI_ENABLE_STATIC_UNWINDER=ON
-        -DLIBCXXABI_ENABLE_STATIC=ON
-        -DLIBCXXABI_ENABLE_SHARED=OFF
-    )
-
     # Use sccache as compiler launcher if available.
     local cmake_launcher_options=()
     if command -v sccache >/dev/null 2>&1; then
@@ -198,6 +171,11 @@ configure_steps() {
         )
     fi
 
+    # Build only the freestanding compiler-rt builtins here (decision 4). The
+    # C++/unwind runtimes (libcxx/libcxxabi/libunwind) require the Nanvix libc
+    # headers, which are staged into the sysroot AFTER this build (the bootstrap
+    # edge, doc/toolchain-migration.md §6.2), so they cannot be built in this
+    # single pass.
     cmake -S llvm -B build -G Ninja \
         -DCMAKE_VERBOSE_MAKEFILE=ON \
         -DLLVM_PARALLEL_LINK_JOBS=1 \
@@ -206,12 +184,9 @@ configure_steps() {
         -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
         -DCMAKE_BUILD_TYPE=Release \
         -DC_INCLUDE_DIRS="${sysroot_location}/usr/include" \
-        -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
+        -DLLVM_ENABLE_RUNTIMES='compiler-rt' \
         "${cmake_launcher_options[@]}" \
-        "${compiler_rt_options[@]}" \
-        "${libcxx_options[@]}" \
-        "${libunwind_options[@]}" \
-        "${libcxxabi_options[@]}" || {
+        "${compiler_rt_options[@]}" || {
         print_error "Configuration failed."
         return 1
     }
