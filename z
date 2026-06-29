@@ -60,6 +60,15 @@ source "${utils_script}"
 # Z Constants
 #==================================================================================================
 
+# Directory containing this script (resolves symlinks to the real path).
+script_source="${BASH_SOURCE[0]}"
+while [[ -h "${script_source}" ]]; do
+    script_dir="$(cd -P "$(dirname "${script_source}")" >/dev/null 2>&1 && pwd)"
+    script_source="$(readlink "${script_source}")"
+    [[ "${script_source}" != /* ]] && script_source="${script_dir}/${script_source}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${script_source}")" >/dev/null 2>&1 && pwd)"
+
 # Project Name
 readonly Z_PROJECT_NAME="LLVM"
 # Directory used when building, empty if not required.
@@ -73,10 +82,11 @@ readonly -A Z_PROJECT_REQUIRED_TOOLS=(
     ["bzip2"]="1.0.8"
     ["tar"]="1.34.0"
     ["cmake"]="3.28.3"
+    ["gh"]="2.0.0"
 )
 
 # Required System Packages for Setup
-readonly Z_PROJECT_REQUIRED_PACKAGES=("build-essential" "wget" "bzip2" "tar" "cmake")
+readonly Z_PROJECT_REQUIRED_PACKAGES=("build-essential" "wget" "bzip2" "tar" "cmake" "gh")
 
 #==================================================================================================
 # Project-Specific Constants
@@ -88,11 +98,21 @@ BUILD_TARGETS=("all")
 # Install Targets
 INSTALL_TARGETS=("install")
 
-# GCC (used only when building without staged mode and no sysroot provided)
-readonly GCC_VERSION="12.4.0"
-readonly GCC_SHORT_COMMIT_HASH="9af215ccf6f"
-readonly GCC_URL="https://github.com/nanvix/gcc/releases/download/nanvix-v${GCC_VERSION}-${GCC_SHORT_COMMIT_HASH}/nanvix-gcc-${GCC_VERSION}-${GCC_SHORT_COMMIT_HASH}-stage1.tar.bz2"
-readonly GCC_SHA256_CHECKSUM="sha256:5411a62fab815ad0d6a4cad919c49ffe666c63caba4310ed0680ca9c7cd0a36f"
+# Target triple for the Nanvix toolchain. Kept in a single place so the stage 0
+# default triple, the stage 1 cross-compile target, and the compiler-rt install
+# directory stay in sync with the clang driver's getTriple().str().
+readonly NANVIX_TARGET="i686-unknown-nanvix"
+
+# Nanvix source tree providing the in-source libc, headers, and user linker
+# script. Defaults to a sibling checkout next to this LLVM tree; override with
+# Z_NANVIX_SRC.
+readonly NANVIX_SRC="${Z_NANVIX_SRC:-${SCRIPT_DIR}/../nanvix}"
+# In-source libc artifacts copied into the sysroot lib directory.
+readonly NANVIX_LIBS=(crt0.o libc.a libm.a libc.so libm.so libnvx_crt0.a libdl.a libpthread.a librt.a)
+# Nanvix release used in CI when no source tree is present: a tarball whose
+# root holds include/ + lib/ (libc.a/libm.a/libc.so/libm.so/crt0.o/user.ld...).
+readonly NANVIX_RELEASE_TAG="${Z_NANVIX_RELEASE_TAG:-v0.17.89}"
+readonly NANVIX_RELEASE_PATTERN="nanvix-x86-microvm-*-release-*.tar.bz2"
 
 #==================================================================================================
 # Project-Specific Functions
@@ -115,33 +135,97 @@ download_steps() {
         return 0
     fi
 
-    # Stage 1 (runtimes): sysroot must already exist.
+    # Stage 1 (runtimes): stage the in-source Nanvix libc into the sysroot.
     if [[ "${Z_STAGE}" == "1" ]]; then
         local sysroot_location="${Z_SYSROOT_LOCATION:-${Z_INSTALL_LOCATION}}"
-        if [[ ! -d "${sysroot_location}" ]]; then
-            print_error "Stage 1 requires a sysroot at '${sysroot_location}'."
+        local install_location="${Z_INSTALL_LOCATION}"
+        local nanvix_src="${NANVIX_SRC}"
+
+        # No local source tree (e.g. CI): download a Nanvix release tarball whose
+        # root holds include/ + lib/, and use it as the libc source.
+        if [[ ! -f "${nanvix_src}/include/stdlib.h" ]]; then
+            print_info "Nanvix source not found; downloading release ${NANVIX_RELEASE_TAG}..."
+            local rel_dir
+            rel_dir="$(mktemp -d)" || {
+                print_error "Failed to create a temporary directory for the Nanvix release download."
+                return 1
+            }
+            # Remove the temporary release directory when this function returns,
+            # regardless of success or failure.
+            trap 'rm -rf "${rel_dir}"' RETURN
+            gh release download "${NANVIX_RELEASE_TAG}" --repo nanvix/nanvix \
+                --pattern "${NANVIX_RELEASE_PATTERN}" --dir "${rel_dir}" || {
+                print_error "Failed to download Nanvix release ${NANVIX_RELEASE_TAG}."
+                return 1
+            }
+            local rel_archive
+            rel_archive=$(find "${rel_dir}" -maxdepth 1 -name "${NANVIX_RELEASE_PATTERN}" | head -1)
+            if [[ -z "${rel_archive}" ]]; then
+                print_error "No Nanvix release archive matching '${NANVIX_RELEASE_PATTERN}' was downloaded for tag ${NANVIX_RELEASE_TAG}."
+                return 1
+            fi
+            extract_tar_bz2 "${rel_archive}" "${rel_dir}" || {
+                print_error "Failed to extract Nanvix release."
+                return 1
+            }
+            nanvix_src="${rel_dir}"
+        fi
+
+        if [[ ! -d "${nanvix_src}" ]]; then
+            print_error "Stage 1 requires a Nanvix libc source/release at '${nanvix_src}'."
             return 1
         fi
-        print_info "Stage 1: using existing sysroot at '${sysroot_location}'."
+
+        # C headers: the in-source Nanvix include tree replaces newlib.
+        if [[ ! -f "${nanvix_src}/include/stdlib.h" ]]; then
+            print_error "Nanvix headers not found at '${nanvix_src}/include'."
+            return 1
+        fi
+        mkdir -p "${sysroot_location}/usr/include"
+        cp -a "${nanvix_src}/include/." "${sysroot_location}/usr/include/" || {
+            print_error "Failed to stage Nanvix headers."
+            return 1
+        }
+        print_info "Stage 1: Nanvix headers staged from '${nanvix_src}/include'."
+
+        # libc/libm/crt0 + stub archives: the in-source artifacts replace
+        # newlib's libc.a/libm.a and GCC's crt objects. The Nanvix driver
+        # resolves crt0.o and the archives under $SYSROOT/lib (see
+        # clang/lib/Driver/ToolChains/Nanvix.cpp), so they must be staged into
+        # the sysroot rather than the install prefix.
+        mkdir -p "${sysroot_location}/lib"
+        for lib in "${NANVIX_LIBS[@]}"; do
+            if [[ ! -f "${nanvix_src}/lib/${lib}" ]]; then
+                print_error "Missing in-source libc artifact '${nanvix_src}/lib/${lib}'."
+                print_error "Build Nanvix first so 'lib/' is populated."
+                return 1
+            fi
+            install -m 644 "${nanvix_src}/lib/${lib}" "${sysroot_location}/lib/"
+        done
+        # user.ld ships in lib/ in a release tarball; fall back to the in-tree
+        # build path for a source checkout.
+        if [[ -f "${nanvix_src}/lib/user.ld" ]]; then
+            install -m 644 "${nanvix_src}/lib/user.ld" "${sysroot_location}/lib/"
+        elif [[ -f "${nanvix_src}/build/user/linker/x86/user.ld" ]]; then
+            install -m 644 "${nanvix_src}/build/user/linker/x86/user.ld" "${sysroot_location}/lib/"
+        else
+            print_error "Failed to locate user.ld in '${nanvix_src}'."
+            return 1
+        fi
+        print_info "Stage 1: in-source libc artifacts staged into '${sysroot_location}/lib'."
+
+        # nanvixd binaries for integration tests (best effort).
+        mkdir -p "${install_location}/libexec/nanvixd"
+        for b in nanvixd.elf kernel.elf linuxd.elf uservm.elf; do
+            [[ -f "${nanvix_src}/bin/${b}" ]] && \
+                install -m 755 "${nanvix_src}/bin/${b}" "${install_location}/libexec/nanvixd/" || true
+        done
+
         return 0
     fi
 
-    # Legacy (no stage specified): download GCC if sysroot location is not set.
-    if [[ -z "${Z_SYSROOT_LOCATION}" ]]; then
-        local sysroot_location="${Z_INSTALL_LOCATION}"
-
-        local gcc_tar_bz2_file
-        gcc_tar_bz2_file=$(download "$GCC_URL" "$GCC_SHA256_CHECKSUM") || {
-            print_error "Failed to download GCC."
-            return 1
-        }
-        extract_tar_bz2 "$gcc_tar_bz2_file" "${sysroot_location}" || {
-            print_error "Failed to extract GCC."
-            return 1
-        }
-    fi
-
-    return 0
+    print_error "No build stage specified. Use --stage=0 or --stage=1."
+    return 1
 }
 
 #
@@ -166,7 +250,7 @@ configure_stage0() {
         -DLLVM_PARALLEL_LINK_JOBS=1 \
         -DLLVM_ENABLE_PROJECTS='clang;lld' \
         -DLLVM_TARGETS_TO_BUILD=X86 \
-        -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
+        -DLLVM_DEFAULT_TARGET_TRIPLE="${NANVIX_TARGET}" \
         -DDEFAULT_SYSROOT="${sysroot_location}" \
         -DC_INCLUDE_DIRS="${sysroot_location}/usr/include" \
         -DCMAKE_BUILD_TYPE=Release \
@@ -186,6 +270,14 @@ configure_stage0() {
 configure_stage1() {
     local sysroot_location="${Z_SYSROOT_LOCATION:-${Z_INSTALL_LOCATION}}"
 
+    # Extract LLVM version for compiler-rt install path.
+    local llvm_version_major
+    llvm_version_major=$(sed -n 's/.*LLVM_VERSION_MAJOR \([0-9]*\).*/\1/p' cmake/Modules/LLVMVersion.cmake)
+    if [[ -z "${llvm_version_major}" ]]; then
+        print_error "Failed to parse LLVM_VERSION_MAJOR from cmake/Modules/LLVMVersion.cmake."
+        return 1
+    fi
+
     # Config options for compiler-rt.
     local compiler_rt_options=(
         -DCOMPILER_RT_BUILD_BUILTINS=ON
@@ -202,6 +294,8 @@ configure_stage1() {
         -DCOMPILER_RT_BUILD_SANITIZERS=OFF
         -DCOMPILER_RT_BUILD_XRAY=OFF
         -DCOMPILER_RT_BUILD_ORC=OFF
+        -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON
+        -DCOMPILER_RT_INSTALL_LIBRARY_DIR="${Z_INSTALL_LOCATION}/lib/clang/${llvm_version_major}/lib/${NANVIX_TARGET}"
     )
 
     # Config options for libc++.
@@ -242,100 +336,21 @@ configure_stage1() {
 
     cmake -S runtimes -B build-runtimes -G Ninja \
         -DCMAKE_VERBOSE_MAKEFILE=ON \
+        -DCMAKE_SYSTEM_NAME=Nanvix \
+        -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
         -DCMAKE_C_COMPILER="${Z_INSTALL_LOCATION}/bin/clang" \
         -DCMAKE_CXX_COMPILER="${Z_INSTALL_LOCATION}/bin/clang++" \
+        -DCMAKE_C_COMPILER_TARGET="${NANVIX_TARGET}" \
+        -DCMAKE_CXX_COMPILER_TARGET="${NANVIX_TARGET}" \
+        -DCMAKE_SYSROOT="${sysroot_location}" \
         -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
         -DCMAKE_BUILD_TYPE=Release \
-        -DC_INCLUDE_DIRS="${sysroot_location}/usr/include" \
         "${cmake_launcher_options[@]}" \
         "${compiler_rt_options[@]}" \
         "${libcxx_options[@]}" \
         "${libunwind_options[@]}" \
         "${libcxxabi_options[@]}" || {
         print_error "Stage 1 configuration failed."
-        return 1
-    }
-
-    return 0
-}
-
-#
-# Description
-#
-#   Configures a legacy (non-staged) LLVM build with Clang + runtimes.
-#
-configure_legacy() {
-    local sysroot_location="${Z_INSTALL_LOCATION}"
-
-    # Config options for compiler-rt.
-    local compiler_rt_options=(
-        -DCOMPILER_RT_BUILD_BUILTINS=ON
-        -DCOMPILER_RT_BUILD_CRT=OFF
-        -DCOMPILER_RT_USE_LIBCXX=OFF
-        -DCOMPILER_RT_CXX_LIBRARY=none
-        -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF
-        -DCOMPILER_RT_BAREMETAL_BUILD=ON
-        -DCOMPILER_RT_BUILD_GWP_ASAN=OFF
-        -DCOMPILER_RT_BUILD_LIBFUZZER=OFF
-        -DCOMPILER_RT_BUILD_MEMPROF=OFF
-        -DCOMPILER_RT_BUILD_PROFILE=OFF
-        -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF
-        -DCOMPILER_RT_BUILD_SANITIZERS=OFF
-        -DCOMPILER_RT_BUILD_XRAY=OFF
-        -DCOMPILER_RT_BUILD_ORC=OFF
-    )
-
-    # Config options for libc++.
-    local libcxx_options=(
-        -DLIBCXX_ENABLE_SHARED=OFF
-        -DLIBCXX_ENABLE_STATIC=ON
-        -DLIBCXX_INCLUDE_TESTS=OFF
-        -DLIBCXX_INCLUDE_BENCHMARKS=OFF
-        -DLIBCXX_ENABLE_TIME_ZONE_DATABASE=OFF
-        -DLIBCXX_HAS_MUSL_LIBC=OFF
-    )
-
-    # Config options for libunwind.
-    local libunwind_options=(
-        -DLIBUNWIND_ENABLE_STATIC=ON
-        -DLIBUNWIND_ENABLE_SHARED=OFF
-        -DLIBUNWIND_USE_COMPILER_RT=ON
-        -DLIBUNWIND_IS_BAREMETAL=ON
-        -DLIBUNWIND_ADDITIONAL_COMPILE_FLAGS='-mno-sse;-mno-sse2'
-    )
-
-    # Config options for libcxxabi.
-    local libcxxabi_options=(
-        -DLIBCXXABI_USE_COMPILER_RT=ON
-        -DLIBCXXABI_ENABLE_STATIC_UNWINDER=ON
-        -DLIBCXXABI_ENABLE_STATIC=ON
-        -DLIBCXXABI_ENABLE_SHARED=OFF
-    )
-
-    # Use sccache as compiler launcher if available.
-    local cmake_launcher_options=()
-    if command -v sccache >/dev/null 2>&1; then
-        cmake_launcher_options+=(
-            -DCMAKE_C_COMPILER_LAUNCHER=sccache
-            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
-        )
-    fi
-
-    cmake -S llvm -B build -G Ninja \
-        -DCMAKE_VERBOSE_MAKEFILE=ON \
-        -DLLVM_PARALLEL_LINK_JOBS=1 \
-        -DLLVM_ENABLE_PROJECTS=clang \
-        -DLLVM_TARGETS_TO_BUILD=X86 \
-        -DLLVM_DEFAULT_TARGET_TRIPLE=i686-unknown-nanvix \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DC_INCLUDE_DIRS="${sysroot_location}/usr/include" \
-        -DLLVM_ENABLE_RUNTIMES='compiler-rt;libunwind;libcxx;libcxxabi' \
-        "${cmake_launcher_options[@]}" \
-        "${compiler_rt_options[@]}" \
-        "${libcxx_options[@]}" \
-        "${libunwind_options[@]}" \
-        "${libcxxabi_options[@]}" || {
-        print_error "Configuration failed."
         return 1
     }
 
@@ -362,7 +377,8 @@ configure_steps() {
     elif [[ "${Z_STAGE}" == "1" ]]; then
         configure_stage1
     else
-        configure_legacy
+        print_error "No build stage specified. Use --stage=0 or --stage=1."
+        return 1
     fi
 }
 

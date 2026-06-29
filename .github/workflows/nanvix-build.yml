@@ -16,10 +16,12 @@ on:
       - 'ready_for_review'
     branches:
       - 'dev'
+      - 'nanvix/**'
 
   push:
     branches:
       - 'dev'
+      - 'nanvix/**'
 
 # Cancel previous running actions for the same PR
 concurrency:
