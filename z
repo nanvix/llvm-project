@@ -330,6 +330,15 @@ configure_stage1() {
         # libc++ to the libc's actual capabilities. Re-enable once the Nanvix
         # libc provides the full wide-character set.
         -DLIBCXX_ENABLE_WIDE_CHARACTERS=OFF
+        # The Nanvix libc does not provide the POSIX xlocale API that libc++
+        # localization requires: uselocale/newlocale/freelocale and the per-
+        # locale variants (isdigit_l, strtod_l, strftime_l, ...). libc++ routes
+        # unknown platforms to bsd_locale_fallbacks.h, which is implemented in
+        # terms of uselocale and so cannot be satisfied here. Disable
+        # localization (drops <locale>, <iostream>, <regex> and locale-aware
+        # <format>/<chrono> formatting). Re-enable once the Nanvix libc provides
+        # the POSIX xlocale API.
+        -DLIBCXX_ENABLE_LOCALIZATION=OFF
     )
 
     # Config options for libunwind.
