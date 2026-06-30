@@ -151,8 +151,11 @@ download_steps() {
                 return 1
             }
             # Remove the temporary release directory when this function returns,
-            # regardless of success or failure.
-            trap 'rm -rf "${rel_dir}"' RETURN
+            # regardless of success or failure. Guard the expansion: when the
+            # shell runs with functrace (set -T), this RETURN trap is inherited
+            # by later functions and fires after rel_dir has gone out of scope,
+            # which would abort under `set -u` ("rel_dir: unbound variable").
+            trap 'rm -rf "${rel_dir:-}" 2>/dev/null || true' RETURN
             gh release download "${NANVIX_RELEASE_TAG}" --repo nanvix/nanvix \
                 --pattern "${NANVIX_RELEASE_PATTERN}" --dir "${rel_dir}" || {
                 print_error "Failed to download Nanvix release ${NANVIX_RELEASE_TAG}."
@@ -337,6 +340,7 @@ configure_stage1() {
     cmake -S runtimes -B build-runtimes -G Ninja \
         -DCMAKE_VERBOSE_MAKEFILE=ON \
         -DCMAKE_SYSTEM_NAME=Nanvix \
+        -DCMAKE_MODULE_PATH="${SCRIPT_DIR}/cmake/nanvix" \
         -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
         -DCMAKE_C_COMPILER="${Z_INSTALL_LOCATION}/bin/clang" \
         -DCMAKE_CXX_COMPILER="${Z_INSTALL_LOCATION}/bin/clang++" \
