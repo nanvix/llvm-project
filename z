@@ -191,6 +191,20 @@ download_steps() {
         }
         print_info "Stage 1: Nanvix headers staged from '${nanvix_src}/include'."
 
+        # Make the staged headers C++-consumable. The in-source Nanvix libc
+        # headers are written for C: they use the C99 'restrict' keyword (not
+        # valid in C++) and a few C++ keywords ('new', 'template') as parameter
+        # names. The stage-1 runtimes (libunwind, libc++/libc++abi) include them
+        # from C++, so rewrite the staged copy: map 'restrict' to the
+        # cross-dialect '__restrict', and drop keyword parameter names (parameter
+        # names in prototypes are optional). Harmless for C consumers
+        # (compiler-rt), which accept both forms.
+        find "${sysroot_location}/usr/include" -type f -name '*.h' -print0 \
+            | xargs -0 -r sed -i -E \
+                -e 's/\brestrict\b/__restrict/g' \
+                -e 's/\b(new|template)\b[[:space:]]*([,)])/\2/g'
+        print_info "Stage 1: sanitized staged headers for C++ consumption."
+
         # libc/libm/crt0 + stub archives: the in-source artifacts replace
         # newlib's libc.a/libm.a and GCC's crt objects. The Nanvix driver
         # resolves crt0.o and the archives under $SYSROOT/lib (see
