@@ -8,17 +8,16 @@ name: CI/CD Pipeline
 #==================================================================================================
 
 on:
+  # PR verification only. Pushes/merges to the release branches are handled by
+  # the Release Pipeline (nanvix-release.yml), which builds stage 0 + stage 1
+  # and publishes the toolchain image. Keeping this workflow PR-only avoids a
+  # redundant stage-0 build on every merge.
   pull_request:
     types:
       - 'opened'
       - 'synchronize'
       - 'reopened'
       - 'ready_for_review'
-    branches:
-      - 'dev'
-      - 'nanvix/**'
-
-  push:
     branches:
       - 'dev'
       - 'nanvix/**'
