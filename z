@@ -323,6 +323,13 @@ configure_stage1() {
         -DLIBCXX_INCLUDE_BENCHMARKS=OFF
         -DLIBCXX_ENABLE_TIME_ZONE_DATABASE=OFF
         -DLIBCXX_HAS_MUSL_LIBC=OFF
+        # The in-source Nanvix libc does not fully implement the wide-character
+        # API (e.g. wcspbrk is neither declared in <wchar.h> nor present in
+        # libc.a). libc++'s <wchar.h> wrapper unconditionally references those
+        # symbols, so building libc++ with wide characters enabled fails. Match
+        # libc++ to the libc's actual capabilities. Re-enable once the Nanvix
+        # libc provides the full wide-character set.
+        -DLIBCXX_ENABLE_WIDE_CHARACTERS=OFF
     )
 
     # Config options for libunwind.
