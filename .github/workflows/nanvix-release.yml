@@ -1,0 +1,230 @@
+# Copyright(c) The Maintainers of Nanvix.
+# Licensed under the MIT License.
+
+name: Release Pipeline
+
+#==================================================================================================
+# Trigger Conditions
+#==================================================================================================
+
+# The Nanvix toolchain now ships its C library and headers in-source (fetched
+# from the nanvix/nanvix release by the `z` build script). There is therefore no
+# longer a binutils/newlib cross-repository dispatch chain: the full toolchain
+# (stage 0 compiler + stage 1 runtimes/libc) is built and published directly
+# whenever the release branch is updated.
+on:
+  push:
+    branches:
+      - 'dev'
+      - 'nanvix/**'
+  workflow_dispatch:
+
+concurrency:
+  group: release-llvm-${{ github.ref }}
+  cancel-in-progress: false
+
+#==================================================================================================
+# Environment Variables
+#==================================================================================================
+
+env:
+  # Version of LLVM.
+  LLVM_VERSION: "22.1.8"
+  # Directory where LLVM (and the staged in-source sysroot) will be installed.
+  INSTALL_LOCATION: /opt/nanvix
+  # Token used by `z` to download the in-source Nanvix libc release (nanvix/nanvix
+  # is public, so the default GITHUB_TOKEN is sufficient) and by `gh` calls below.
+  GH_TOKEN: ${{ github.token }}
+
+#==================================================================================================
+# Jobs
+#==================================================================================================
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Git configuration
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Get commit information
+      id: commit_info
+      run: |
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        TAG_NAME="nanvix-v${{ env.LLVM_VERSION }}-${SHORT_SHA}"
+        RELEASE_NAME="nanvix-llvm-${{ env.LLVM_VERSION }}-${SHORT_SHA}"
+        echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+        echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+        echo "release_name=${RELEASE_NAME}" >> $GITHUB_OUTPUT
+
+    - name: Check if release already exists
+      id: check_release
+      run: |
+        TAG_NAME="${{ steps.commit_info.outputs.tag_name }}"
+        if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+          echo "Release ${TAG_NAME} already exists; skipping build and publish."
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+
+    #----------------------------------------------------------------------------------------------
+    # Build (stage 0 compiler -> stage 1 runtimes + in-source Nanvix libc)
+    #----------------------------------------------------------------------------------------------
+
+    - name: Restore sccache cache
+      if: steps.check_release.outputs.exists == 'false'
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/sccache
+        key: ${{ runner.os }}-sccache-release-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-sccache-release-
+          ${{ runner.os }}-sccache
+
+    - name: Enable Compiler Caching
+      if: steps.check_release.outputs.exists == 'false'
+      uses: mozilla-actions/sccache-action@v0.0.9
+
+    - name: Install dependencies
+      if: steps.check_release.outputs.exists == 'false'
+      run: sudo ./z setup
+
+    # Stage 0: build and install the Clang/LLD compiler (no runtimes, no libc).
+    - name: Configure LLVM (stage 0)
+      if: steps.check_release.outputs.exists == 'false'
+      run: ./z configure --install-location=${{ env.INSTALL_LOCATION }} --stage=0
+
+    - name: Build LLVM (stage 0)
+      if: steps.check_release.outputs.exists == 'false'
+      run: ./z build
+
+    - name: Install LLVM (stage 0)
+      if: steps.check_release.outputs.exists == 'false'
+      run: ./z install
+
+    # Stage 1: build the runtimes (compiler-rt, libunwind, libc++/libc++abi)
+    # against the in-source Nanvix libc. `z` stages the libc/headers into the
+    # sysroot, downloading the nanvix/nanvix release when no local source tree is
+    # present (CI). This requires GH_TOKEN (set at workflow level above).
+    - name: Configure LLVM (stage 1)
+      if: steps.check_release.outputs.exists == 'false'
+      run: ./z configure --install-location=${{ env.INSTALL_LOCATION }} --sysroot-location=${{ env.INSTALL_LOCATION }} --release-name=${{ steps.commit_info.outputs.release_name }} --stage=1
+
+    - name: Build LLVM (stage 1)
+      if: steps.check_release.outputs.exists == 'false'
+      run: ./z build
+
+    - name: Install LLVM (stage 1)
+      if: steps.check_release.outputs.exists == 'false'
+      run: ./z install
+
+    #----------------------------------------------------------------------------------------------
+    # Tests (build-only: verify artifacts + compile/link smoke tests)
+    #----------------------------------------------------------------------------------------------
+
+    - name: Verify toolchain artifacts
+      if: steps.check_release.outputs.exists == 'false'
+      run: ./z verify
+
+    - name: Build smoke tests
+      if: steps.check_release.outputs.exists == 'false'
+      run: ./z test
+
+    #----------------------------------------------------------------------------------------------
+    # Docker Login
+    #----------------------------------------------------------------------------------------------
+
+    - name: Determine Docker image
+      if: steps.check_release.outputs.exists == 'false'
+      id: docker_image
+      run: |
+        SHORT_SHA="${{ steps.commit_info.outputs.short_sha }}"
+        IMAGE="ghcr.io/nanvix/llvm-project"
+        echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+        echo "tags=${IMAGE}:latest,${IMAGE}:${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+    - name: Login to GHCR
+      if: steps.check_release.outputs.exists == 'false'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    #----------------------------------------------------------------------------------------------
+    # Release Artifacts (tarball + Docker image)
+    #----------------------------------------------------------------------------------------------
+
+    # `./z release` builds the toolchain, creates the tarball, and builds the
+    # Docker image (tagged "<image>:latest" and "<image>:<short-sha>").
+    - name: Create release artifacts
+      if: steps.check_release.outputs.exists == 'false'
+      env:
+        Z_DOCKER_IMAGE: ${{ steps.docker_image.outputs.image }}
+      run: ./z release
+
+    - name: Push Docker image
+      if: steps.check_release.outputs.exists == 'false'
+      run: |
+        docker push "${{ steps.docker_image.outputs.image }}:latest"
+        docker push "${{ steps.docker_image.outputs.image }}:${{ steps.commit_info.outputs.short_sha }}"
+
+    - name: Make package public
+      if: steps.check_release.outputs.exists == 'false'
+      run: |
+        curl -fsS -X PATCH \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/orgs/${{ github.repository_owner }}/packages/container/llvm-project" \
+          -d '{"visibility":"public"}' || true
+
+    #----------------------------------------------------------------------------------------------
+    # Git Tag + GitHub Release
+    #----------------------------------------------------------------------------------------------
+
+    - name: Create release tag
+      if: steps.check_release.outputs.exists == 'false'
+      run: |
+        TAG_NAME="${{ steps.commit_info.outputs.tag_name }}"
+        if git rev-parse -q --verify "refs/tags/${TAG_NAME}" >/dev/null; then
+          echo "Tag ${TAG_NAME} already exists locally; skipping tag creation."
+        else
+          git tag "${TAG_NAME}"
+          git push origin "${TAG_NAME}"
+        fi
+
+    - name: Create GitHub Release
+      if: steps.check_release.outputs.exists == 'false'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.commit_info.outputs.tag_name }}
+        name: "${{ steps.commit_info.outputs.tag_name }}"
+        body: |
+          Automated release of the Nanvix LLVM ${{ env.LLVM_VERSION }} toolchain.
+
+          Built from commit: ${{ steps.commit_info.outputs.short_sha }}
+
+          This toolchain targets the Nanvix operating system (i686-unknown-nanvix)
+          and bundles the in-source Nanvix C library and headers.
+
+          **Artifacts:**
+          - Tarball: `${{ steps.commit_info.outputs.release_name }}.tar.bz2`
+          - Docker: `${{ steps.docker_image.outputs.tags }}`
+        files: |
+          ${{ steps.commit_info.outputs.release_name }}.tar.bz2
+        draft: false
+        prerelease: false
