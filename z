@@ -339,6 +339,12 @@ configure_stage1() {
         # <format>/<chrono> formatting). Re-enable once the Nanvix libc provides
         # the POSIX xlocale API.
         -DLIBCXX_ENABLE_LOCALIZATION=OFF
+        # libc++'s <filesystem> (operations.cpp) needs POSIX facilities the
+        # Nanvix libc lacks (e.g. _PC_PATH_MAX for pathconf), and its copy_file
+        # fallback requires <fstream>, which is unavailable once localization is
+        # off. Disable filesystem to match the libc. Re-enable once the Nanvix
+        # libc provides the required POSIX filesystem API.
+        -DLIBCXX_ENABLE_FILESYSTEM=OFF
     )
 
     # Config options for libunwind.
